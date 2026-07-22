@@ -7,6 +7,8 @@ import Link from "next/link";
 function LoginForm() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
+  const reason = searchParams.get("reason");
+  const detail = searchParams.get("detail");
   const [shop, setShop] = useState("");
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -29,7 +31,13 @@ function LoginForm() {
       : error === "oauth_begin_failed"
         ? "Could not start installation. Check your app credentials and try again."
         : error === "oauth_callback_failed"
-          ? "Installation failed during OAuth callback. Ensure the redirect URL matches your Partner Dashboard settings."
+          ? reason === "invalid_hmac"
+            ? "OAuth HMAC failed. Double-check SHOPIFY_API_SECRET in Vercel matches the Partner Dashboard."
+            : reason === "state_mismatch"
+              ? "Install session expired or cookies were blocked. Try again and complete install within 10 minutes."
+              : reason === "token_exchange_failed"
+                ? "Shopify rejected the token exchange. Confirm Client ID and Secret are for the same app."
+                : "Installation failed during OAuth callback. Ensure App URL, HOST, and redirect URL all use the same domain."
           : error
             ? "Something went wrong. Please try again."
             : null;
@@ -52,7 +60,13 @@ function LoginForm() {
           className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
           role="alert"
         >
-          {errorMessage}
+          <p>{errorMessage}</p>
+          {reason ? (
+            <p className="mt-1 text-xs opacity-80">Code: {reason}</p>
+          ) : null}
+          {detail ? (
+            <p className="mt-1 break-all text-xs opacity-70">{detail}</p>
+          ) : null}
         </div>
       ) : null}
 

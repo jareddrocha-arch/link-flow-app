@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getOAuthRedirectUri,
-  getShopify,
-  OAUTH_CALLBACK_PATH,
-  sanitizeShopDomain,
-} from "@/lib/shopify";
+import { beginOAuthRedirect } from "@/lib/oauth";
+import { getOAuthRedirectUri, sanitizeShopDomain } from "@/lib/shopify";
 
 /**
  * Begin Shopify OAuth.
@@ -21,22 +17,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const shopify = getShopify(request.url);
     const redirectUri = getOAuthRedirectUri(request.url);
-
-    // Helpful for debugging whitelist mismatches (visible in Vercel function logs)
     console.info("[oauth/begin]", {
       shop,
       redirectUri,
       hostEnv: process.env.HOST ?? null,
-      vercelUrl: process.env.VERCEL_URL ?? null,
     });
 
-    return await shopify.auth.begin({
+    return beginOAuthRedirect({
       shop,
-      callbackPath: OAUTH_CALLBACK_PATH,
-      isOnline: false,
-      rawRequest: request,
+      requestUrl: request.url,
     });
   } catch (error) {
     console.error("OAuth begin failed:", error);

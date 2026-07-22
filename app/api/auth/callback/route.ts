@@ -1,45 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getShopify, sessionStorage } from "@/lib/shopify";
+import { clearOAuthCookies, completeOAuth } from "@/lib/oauth";
+import { sessionStorage } from "@/lib/shopify";
 
 /**
  * Complete Shopify OAuth and store the offline session.
- * Redirect URI: {appUrl}/api/auth/callback
- * Must match Partner Dashboard → Allowed redirection URL(s) exactly.
+ * Redirect URI: {HOST}/api/auth/callback
  */
 export async function GET(request: NextRequest) {
   try {
-    const shopify = getShopify(request.url);
-    const callback = await shopify.auth.callback({
-      rawRequest: request,
+    const result = await completeOAuth({ requestUrl: request.url });
+
+    if (!result.ok) {
+      console.error("OAuth callback failed:", result.code, result.message);
+      const loginUrl = new URL("/auth/login", request.url);
+      loginUrl.searchParams.set("error", "oauth_callback_failed");
+      loginUrl.searchParams.set("reason", result.code);
+      loginUrl.searchParams.set("detail", result.message.slice(0, 120));
+      return NextResponse.redirect(loginUrl);
+    }
+
+    await sessionStorage.storeSession(result.session);
+
+    console.info("[oauth/callback] success", {
+      shop: result.session.shop,
+      scope: result.session.scope,
     });
 
-    await sessionStorage.storeSession(callback.session);
-
     const redirectUrl = new URL("/auth/callback", request.url);
-    redirectUrl.searchParams.set("shop", callback.session.shop);
+    redirectUrl.searchParams.set("shop", result.session.shop);
     redirectUrl.searchParams.set("installed", "1");
 
     const response = NextResponse.redirect(redirectUrl);
-
-    // Forward Set-Cookie headers from the OAuth library (state cleanup / session cookie)
-    if (callback.headers) {
-      const headers =
-        callback.headers instanceof Headers
-          ? callback.headers
-          : new Headers(callback.headers as HeadersInit);
-
-      headers.forEach((value, key) => {
-        if (key.toLowerCase() === "set-cookie") {
-          response.headers.append("Set-Cookie", value);
-        }
-      });
-    }
-
+    clearOAuthCookies(response);
     return response;
   } catch (error) {
-    console.error("OAuth callback failed:", error);
+    console.error("OAuth callback unexpected error:", error);
     const loginUrl = new URL("/auth/login", request.url);
     loginUrl.searchParams.set("error", "oauth_callback_failed");
+    loginUrl.searchParams.set("reason", "unexpected");
     return NextResponse.redirect(loginUrl);
   }
 }
