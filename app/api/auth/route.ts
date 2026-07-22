@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { shopify, sanitizeShopDomain } from "@/lib/shopify";
+import {
+  getOAuthRedirectUri,
+  getShopify,
+  OAUTH_CALLBACK_PATH,
+  sanitizeShopDomain,
+} from "@/lib/shopify";
 
 /**
  * Begin Shopify OAuth.
@@ -7,7 +12,7 @@ import { shopify, sanitizeShopDomain } from "@/lib/shopify";
  */
 export async function GET(request: NextRequest) {
   const shopParam = request.nextUrl.searchParams.get("shop");
-  const shop = sanitizeShopDomain(shopParam);
+  const shop = sanitizeShopDomain(shopParam, request.url);
 
   if (!shop) {
     const loginUrl = new URL("/auth/login", request.url);
@@ -16,9 +21,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const shopify = getShopify(request.url);
+    const redirectUri = getOAuthRedirectUri(request.url);
+
+    // Helpful for debugging whitelist mismatches (visible in Vercel function logs)
+    console.info("[oauth/begin]", {
+      shop,
+      redirectUri,
+      hostEnv: process.env.HOST ?? null,
+      vercelUrl: process.env.VERCEL_URL ?? null,
+    });
+
     return await shopify.auth.begin({
       shop,
-      callbackPath: "/api/auth/callback",
+      callbackPath: OAUTH_CALLBACK_PATH,
       isOnline: false,
       rawRequest: request,
     });

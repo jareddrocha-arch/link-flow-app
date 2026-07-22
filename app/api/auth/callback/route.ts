@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { shopify, sessionStorage } from "@/lib/shopify";
+import { getShopify, sessionStorage } from "@/lib/shopify";
 
 /**
  * Complete Shopify OAuth and store the offline session.
- * Redirect URI: {HOST}/api/auth/callback
+ * Redirect URI: {appUrl}/api/auth/callback
+ * Must match Partner Dashboard → Allowed redirection URL(s) exactly.
  */
 export async function GET(request: NextRequest) {
   try {
+    const shopify = getShopify(request.url);
     const callback = await shopify.auth.callback({
       rawRequest: request,
     });
