@@ -21,12 +21,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(loginUrl);
     }
 
-    const { session } = result;
+    const { session, tokenMeta } = result;
 
     const store = await upsertStoreFromOAuth({
       shop: session.shop,
       accessToken: session.accessToken!,
       scopes: session.scope ?? process.env.SCOPES ?? "",
+      expiresIn: tokenMeta.expiresIn,
+      refreshToken: tokenMeta.refreshToken,
+      refreshTokenExpiresIn: tokenMeta.refreshTokenExpiresIn,
     });
 
     // Automatic tracking injection (ScriptTag + order webhooks)

@@ -9,6 +9,7 @@ import {
   listScriptTags,
   listWebhooks,
 } from "@/lib/shopify-admin";
+import { getValidAccessToken } from "@/lib/shopify-tokens";
 import {
   getTrackingScriptUrl,
   getWebhookCallbackUrl,
@@ -21,6 +22,7 @@ export type ProvisionResult = {
   webPixelId: string | null;
   webhooks: string[];
   errors: string[];
+  scopes: string | null;
 };
 
 function salesTrackApiUrl(): string {
@@ -41,6 +43,8 @@ export async function provisionStoreTracking(
   let scriptTagId: string | null = store.scriptTagId;
   let scriptSrc: string | null = null;
   let webPixelId: string | null = store.webPixelId;
+  let accessToken = store.accessToken;
+  let workingStore = store;
 
   if (!store.accessToken) {
     return {
@@ -49,6 +53,7 @@ export async function provisionStoreTracking(
       webPixelId: null,
       webhooks: [],
       errors: ["Missing access token"],
+      scopes: store.scopes || null,
     };
   }
 
@@ -59,18 +64,46 @@ export async function provisionStoreTracking(
       webPixelId: null,
       webhooks: [],
       errors: ["Missing brandKey"],
+      scopes: store.scopes || null,
     };
+  }
+
+  // Ensure expiring offline token (Shopify rejects non-expiring Admin API tokens)
+  try {
+    const valid = await getValidAccessToken(store);
+    accessToken = valid.accessToken;
+    workingStore = valid.store;
+  } catch (e) {
+    return {
+      scriptTagId: scriptTagId,
+      scriptSrc: null,
+      webPixelId: webPixelId,
+      webhooks: [],
+      errors: [
+        e instanceof Error
+          ? e.message
+          : "Invalid Shopify access token — reinstall the app",
+      ],
+      scopes: store.scopes || null,
+    };
+  }
+
+  const scopes = workingStore.scopes || "";
+  if (!scopes.includes("write_pixels")) {
+    errors.push(
+      "Missing write_pixels scope — reinstall the app and approve pixel permissions",
+    );
   }
 
   // ── ScriptTag (storefront first-click) ────────────────────────────────────
   try {
     scriptSrc = getTrackingScriptUrl({ brandKey: store.brandKey });
-    const existing = await listScriptTags(store.shop, store.accessToken);
+    const existing = await listScriptTags(store.shop, accessToken);
 
     for (const tag of existing) {
       if (isLinkFlowScriptSrc(tag.src)) {
         try {
-          await deleteScriptTag(store.shop, store.accessToken, tag.id);
+          await deleteScriptTag(store.shop, accessToken, tag.id);
         } catch (e) {
           errors.push(
             `delete script_tag ${tag.id}: ${e instanceof Error ? e.message : String(e)}`,
@@ -81,7 +114,7 @@ export async function provisionStoreTracking(
 
     const created = await createScriptTag({
       shop: store.shop,
-      accessToken: store.accessToken,
+      accessToken,
       src: scriptSrc,
       displayScope: "online_store",
     });
@@ -94,10 +127,10 @@ export async function provisionStoreTracking(
   try {
     const pixel = await ensureWebPixel({
       shop: store.shop,
-      accessToken: store.accessToken,
+      accessToken,
       brandKey: store.brandKey,
       apiUrl: salesTrackApiUrl(),
-      existingId: store.webPixelId,
+      existingId: workingStore.webPixelId,
     });
 
     if (pixel.userErrors?.length) {
@@ -108,7 +141,9 @@ export async function provisionStoreTracking(
     if (pixel.id) {
       webPixelId = pixel.id;
     } else if (!pixel.userErrors?.length) {
-      errors.push("web_pixel: no id returned (deploy extension + scopes?)");
+      errors.push(
+        "web_pixel: no id returned — deploy the web pixel extension (shopify app deploy) and ensure write_pixels scope",
+      );
     }
   } catch (e) {
     errors.push(
@@ -129,7 +164,7 @@ export async function provisionStoreTracking(
   ] as const;
 
   try {
-    const existingHooks = await listWebhooks(store.shop, store.accessToken);
+    const existingHooks = await listWebhooks(store.shop, accessToken);
     for (const topic of topics) {
       const already = existingHooks.find(
         (h) => h.topic === topic && h.address === webhookAddress,
@@ -141,7 +176,7 @@ export async function provisionStoreTracking(
       try {
         await createWebhook({
           shop: store.shop,
-          accessToken: store.accessToken,
+          accessToken,
           topic,
           address: webhookAddress,
         });
@@ -175,5 +210,6 @@ export async function provisionStoreTracking(
     webPixelId,
     webhooks: webhooksRegistered,
     errors,
+    scopes: workingStore.scopes || scopes || null,
   };
 }

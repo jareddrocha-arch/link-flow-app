@@ -8,6 +8,9 @@ export type UpsertStoreInput = {
   accessToken: string;
   scopes?: string | null;
   name?: string | null;
+  expiresIn?: number | null;
+  refreshToken?: string | null;
+  refreshTokenExpiresIn?: number | null;
 };
 
 /**
@@ -24,6 +27,14 @@ export async function upsertStoreFromOAuth(
 
   const scopes = (input.scopes ?? "").trim();
   const now = new Date();
+  const accessTokenExpiresAt =
+    input.expiresIn != null
+      ? new Date(now.getTime() + input.expiresIn * 1000)
+      : null;
+  const refreshTokenExpiresAt =
+    input.refreshTokenExpiresIn != null
+      ? new Date(now.getTime() + input.refreshTokenExpiresIn * 1000)
+      : null;
 
   const existing = await prisma.store.findUnique({ where: { shop } });
 
@@ -37,6 +48,10 @@ export async function upsertStoreFromOAuth(
         status: "ACTIVE",
         uninstalledAt: null,
         tokenUpdatedAt: now,
+        accessTokenExpiresAt,
+        refreshToken: input.refreshToken ?? existing.refreshToken,
+        refreshTokenExpiresAt:
+          refreshTokenExpiresAt ?? existing.refreshTokenExpiresAt,
         brandKey: existing.brandKey ?? generateBrandKey(),
       },
     });
@@ -51,6 +66,9 @@ export async function upsertStoreFromOAuth(
       status: "ACTIVE",
       installedAt: now,
       tokenUpdatedAt: now,
+      accessTokenExpiresAt,
+      refreshToken: input.refreshToken ?? null,
+      refreshTokenExpiresAt,
       brandKey: generateBrandKey(),
     },
   });

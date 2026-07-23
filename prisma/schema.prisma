@@ -55,6 +55,12 @@ model Store {
   shop         String      @unique
   /// Offline Admin API access token (treat as secret)
   accessToken  String
+  /// When the offline access token expires (expiring offline tokens)
+  accessTokenExpiresAt DateTime?
+  /// Refresh token for rotating offline access tokens
+  refreshToken String?
+  /// When the refresh token expires (~90 days)
+  refreshTokenExpiresAt DateTime?
   /// Granted scopes as comma-separated string
   scopes       String      @default("")
   /// Optional display name

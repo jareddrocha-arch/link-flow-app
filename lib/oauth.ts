@@ -75,8 +75,14 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
+export type OAuthTokenMeta = {
+  expiresIn: number | null;
+  refreshToken: string | null;
+  refreshTokenExpiresIn: number | null;
+};
+
 export type OAuthCallbackResult =
-  | { ok: true; session: Session }
+  | { ok: true; session: Session; tokenMeta: OAuthTokenMeta }
   | { ok: false; code: string; message: string };
 
 /**
@@ -174,32 +180,27 @@ export async function completeOAuth(options: {
     };
   }
 
-  const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      client_id: apiKey,
-      client_secret: apiSecret,
-      code,
-    }),
-  });
-
-  if (!tokenRes.ok) {
-    const body = await tokenRes.text().catch(() => "");
+  // Request **expiring** offline tokens (required by Shopify Admin API 2025+)
+  let tokenJson: {
+    access_token?: string;
+    scope?: string;
+    expires_in?: number;
+    refresh_token?: string;
+    refresh_token_expires_in?: number;
+  };
+  try {
+    const { exchangeAuthorizationCode } = await import("@/lib/shopify-tokens");
+    tokenJson = await exchangeAuthorizationCode({ shop, code });
+  } catch (e) {
     return {
       ok: false,
       code: "token_exchange_failed",
-      message: `Token exchange failed (${tokenRes.status}): ${body.slice(0, 200)}`,
+      message:
+        e instanceof Error
+          ? e.message.slice(0, 200)
+          : "Token exchange failed",
     };
   }
-
-  const tokenJson = (await tokenRes.json()) as {
-    access_token?: string;
-    scope?: string;
-  };
 
   if (!tokenJson.access_token) {
     return {
@@ -216,9 +217,22 @@ export async function completeOAuth(options: {
     isOnline: false,
     accessToken: tokenJson.access_token,
     scope: tokenJson.scope,
+    expires:
+      tokenJson.expires_in != null
+        ? new Date(Date.now() + tokenJson.expires_in * 1000)
+        : undefined,
   });
 
-  return { ok: true, session };
+  // Attach refresh metadata for upsert (not part of Session class)
+  return {
+    ok: true,
+    session,
+    tokenMeta: {
+      expiresIn: tokenJson.expires_in ?? null,
+      refreshToken: tokenJson.refresh_token ?? null,
+      refreshTokenExpiresIn: tokenJson.refresh_token_expires_in ?? null,
+    },
+  };
 }
 
 /** Clear one-time OAuth cookies on the success redirect response. */
