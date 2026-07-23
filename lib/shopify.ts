@@ -7,7 +7,8 @@ import {
 } from "@shopify/shopify-api";
 
 function requireEnv(name: string): string {
-  const value = process.env[name];
+  // Trim — secrets pasted into Vercel often include trailing newlines that break HMAC
+  const value = process.env[name]?.trim();
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
   }

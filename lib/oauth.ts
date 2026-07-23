@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { Session } from "@shopify/shopify-api";
@@ -12,8 +12,9 @@ const OAUTH_COOKIE_MAX_AGE = 60 * 10;
 export { OAUTH_CALLBACK_PATH };
 
 function getCredentials() {
-  const apiKey = process.env.SHOPIFY_API_KEY;
-  const apiSecret = process.env.SHOPIFY_API_SECRET;
+  // Trim — Vercel/env pastes often include trailing newlines/spaces and break HMAC
+  const apiKey = process.env.SHOPIFY_API_KEY?.trim();
+  const apiSecret = process.env.SHOPIFY_API_SECRET?.trim();
   if (!apiKey || !apiSecret) {
     throw new Error("Missing SHOPIFY_API_KEY or SHOPIFY_API_SECRET");
   }
@@ -74,44 +75,27 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
-/**
- * Verify Shopify OAuth callback HMAC (query string minus hmac).
- * @see https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/authorization-code-grant
- */
-export function verifyOAuthHmac(
-  searchParams: URLSearchParams,
-  apiSecret: string,
-): boolean {
-  const hmac = searchParams.get("hmac");
-  if (!hmac) return false;
-
-  const entries: string[] = [];
-  searchParams.forEach((value, key) => {
-    if (key !== "hmac" && key !== "signature") {
-      entries.push(`${key}=${value}`);
-    }
-  });
-  entries.sort();
-  const message = entries.join("&");
-
-  const digest = createHmac("sha256", apiSecret).update(message).digest("hex");
-
-  try {
-    return safeEqual(digest, hmac);
-  } catch {
-    return false;
-  }
-}
-
 export type OAuthCallbackResult =
   | { ok: true; session: Session }
   | { ok: false; code: string; message: string };
+
+/**
+ * Build the query object Shopify's validateHmac expects (string values only).
+ */
+function authQueryFromUrl(url: URL): Record<string, string> {
+  const query: Record<string, string> = {};
+  url.searchParams.forEach((value, key) => {
+    query[key] = value;
+  });
+  return query;
+}
 
 export async function completeOAuth(options: {
   requestUrl: string;
 }): Promise<OAuthCallbackResult> {
   const url = new URL(options.requestUrl);
   const { apiKey, apiSecret } = getCredentials();
+  // Pass trimmed secret into Shopify client for HMAC + any library calls
   const shopify = getShopify(options.requestUrl);
 
   const shopParam = url.searchParams.get("shop");
@@ -131,11 +115,41 @@ export async function completeOAuth(options: {
     return { ok: false, code: "invalid_shop", message: "Invalid shop domain" };
   }
 
-  if (!verifyOAuthHmac(url.searchParams, apiSecret)) {
+  // Use official Shopify HMAC (URL-encoded query string + hex digest)
+  try {
+    const query = authQueryFromUrl(url);
+    const valid = await shopify.utils.validateHmac(query);
+    if (!valid) {
+      console.error("[oauth/callback] invalid_hmac", {
+        secretLength: apiSecret.length,
+        secretPrefix: apiSecret.slice(0, 6),
+        hasHmac: Boolean(query.hmac),
+        hasTimestamp: Boolean(query.timestamp),
+        keys: Object.keys(query).sort(),
+      });
+      return {
+        ok: false,
+        code: "invalid_hmac",
+        message:
+          "HMAC validation failed — SHOPIFY_API_SECRET does not match this Client ID (or has extra spaces/newlines in Vercel).",
+      };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[oauth/callback] hmac error:", message);
+    // Timestamp window is only ~90s in the library — surface that clearly
+    if (/timestamp/i.test(message)) {
+      return {
+        ok: false,
+        code: "hmac_timestamp",
+        message:
+          "OAuth callback took too long (HMAC timestamp expired). Click install again and approve quickly.",
+      };
+    }
     return {
       ok: false,
       code: "invalid_hmac",
-      message: "HMAC validation failed — check SHOPIFY_API_SECRET",
+      message: `HMAC validation failed: ${message.slice(0, 100)}`,
     };
   }
 
