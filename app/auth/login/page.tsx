@@ -39,7 +39,9 @@ function LoginForm() {
               ? "Install session expired or cookies were blocked. Try again and complete install within 10 minutes."
               : reason === "token_exchange_failed"
                 ? "Shopify rejected the token exchange. Confirm Client ID and Secret are for the same app."
-                : "Installation failed during OAuth callback. Ensure App URL, HOST, and redirect URL all use the same domain."
+                : reason === "database_error"
+                  ? "Installed with Shopify, but saving to the database failed. Check DATABASE_URL / Supabase connection on Vercel."
+                  : "Installation failed during OAuth callback. Ensure App URL, HOST, and redirect URL all use the same domain."
           : error
             ? "Something went wrong. Please try again."
             : null;

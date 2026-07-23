@@ -1,12 +1,17 @@
 import Link from "next/link";
 
 type CallbackPageProps = {
-  searchParams: Promise<{ shop?: string; installed?: string }>;
+  searchParams: Promise<{
+    shop?: string;
+    installed?: string;
+    brandKey?: string;
+  }>;
 };
 
 export default async function CallbackPage({ searchParams }: CallbackPageProps) {
   const params = await searchParams;
   const shop = params.shop;
+  const brandKey = params.brandKey;
   const installed = params.installed === "1";
 
   return (
@@ -22,9 +27,15 @@ export default async function CallbackPage({ searchParams }: CallbackPageProps) 
               : "Link Flow Affiliates is now installed."}
           </p>
           <p className="mt-4 text-sm text-zinc-500">
-            An offline access token has been stored for this shop. You can close
-            this window or return to the app home.
+            Offline access token and store record were saved to the database.
+            You can close this window or return to the app home.
           </p>
+          {brandKey ? (
+            <p className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
+              <span className="font-medium">Brand key: </span>
+              <code className="text-xs">{brandKey}</code>
+            </p>
+          ) : null}
         </>
       ) : (
         <>
@@ -40,7 +51,7 @@ export default async function CallbackPage({ searchParams }: CallbackPageProps) 
 
       <div className="mt-8 flex gap-3">
         <Link
-          href="/"
+          href={shop ? `/?shop=${encodeURIComponent(shop)}` : "/"}
           className="rounded-md bg-black px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800"
         >
           Go to app home

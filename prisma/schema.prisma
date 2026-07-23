@@ -1,0 +1,220 @@
+// Link Flow Affiliates — Prisma schema (PostgreSQL / Supabase)
+// CLI datasource URL lives in prisma.config.ts (Prisma 7+)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum StoreStatus {
+  ACTIVE
+  UNINSTALLED
+  SUSPENDED
+}
+
+enum AffiliateStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  REJECTED
+}
+
+enum SaleStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum ClickStatus {
+  VALID
+  BOT
+  DUPLICATE
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+/// Shopify store that installed the app (offline OAuth session).
+model Store {
+  id           String      @id @default(cuid())
+  /// e.g. lftesting.myshopify.com (unique)
+  shop         String      @unique
+  /// Offline Admin API access token (treat as secret)
+  accessToken  String
+  /// Granted scopes as comma-separated string
+  scopes       String      @default("")
+  /// Optional display name
+  name         String?
+  /// Link Flow brand tracking key (fb_…) for thank-you / script tags
+  brandKey     String?     @unique
+  status       StoreStatus @default(ACTIVE)
+  installedAt  DateTime    @default(now())
+  uninstalledAt DateTime?
+  /// Last successful OAuth / token refresh
+  tokenUpdatedAt DateTime  @default(now())
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  affiliates Affiliate[]
+  clicks     Click[]
+  sales      Sale[]
+  payouts    Payout[]
+
+  @@index([status])
+  @@index([brandKey])
+}
+
+/// Affiliate / creator promoting a store’s products.
+model Affiliate {
+  id               String          @id @default(cuid())
+  storeId          String
+  store            Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// Public referral code used in links (?fa_ref=…) — unique per store
+  referralCode     String
+  email            String?
+  name             String?
+  /// Commission rate as percent (e.g. 10.00 = 10%)
+  commissionRate   Decimal         @default(10.00) @db.Decimal(5, 2)
+  status           AffiliateStatus @default(PENDING)
+  /// Optional payout destination (email / handle) — never log full bank details
+  payoutEmail      String?
+  notes            String?
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  clicks  Click[]
+  sales   Sale[]
+  payouts Payout[]
+
+  @@unique([storeId, referralCode])
+  @@index([storeId, status])
+  @@index([referralCode])
+  @@index([email])
+}
+
+/// First-click / landing attribution event.
+model Click {
+  id           String      @id @default(cuid())
+  storeId      String
+  store        Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  affiliateId  String?
+  affiliate    Affiliate?  @relation(fields: [affiliateId], references: [id], onDelete: SetNull)
+
+  referralCode String
+  landingUrl   String?
+  referrerUrl  String?
+  /// Hashed IP for privacy (never store raw IP long-term if avoidable)
+  ipHash       String?
+  userAgent    String?
+  status       ClickStatus @default(VALID)
+  /// Optional product context
+  productId    String?
+
+  createdAt    DateTime    @default(now())
+
+  sales Sale[]
+
+  @@index([storeId, createdAt])
+  @@index([affiliateId, createdAt])
+  @@index([referralCode, createdAt])
+  @@index([storeId, referralCode])
+}
+
+/// Tracked order / conversion (from thank-you page, webhook, or manual).
+model Sale {
+  id              String     @id @default(cuid())
+  storeId         String
+  store           Store      @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  affiliateId     String?
+  affiliate       Affiliate? @relation(fields: [affiliateId], references: [id], onDelete: SetNull)
+  clickId         String?
+  click           Click?     @relation(fields: [clickId], references: [id], onDelete: SetNull)
+
+  /// Shopify (or external) order id — unique per store for idempotency
+  orderId         String?
+  /// Order subtotal / commission base (major currency units)
+  amount          Decimal    @db.Decimal(12, 2)
+  /// Computed commission owed for this sale
+  commission      Decimal    @default(0) @db.Decimal(12, 2)
+  currency        String     @default("USD") @db.VarChar(3)
+  status          SaleStatus @default(PENDING)
+
+  productId       String?
+  productName     String?
+  referralCode    String?
+  pageUrl         String?
+
+  /// When commission was approved / paid (optional lifecycle)
+  approvedAt      DateTime?
+  paidAt          DateTime?
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  payoutItems PayoutItem[]
+
+  @@unique([storeId, orderId])
+  @@index([storeId, status, createdAt])
+  @@index([affiliateId, status])
+  @@index([referralCode])
+  @@index([createdAt])
+}
+
+/// Batch payout to an affiliate.
+model Payout {
+  id          String       @id @default(cuid())
+  storeId     String
+  store       Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  affiliateId String
+  affiliate   Affiliate    @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+
+  amount      Decimal      @db.Decimal(12, 2)
+  currency    String       @default("USD") @db.VarChar(3)
+  status      PayoutStatus @default(PENDING)
+  /// External transfer reference (Stripe, PayPal, etc.)
+  externalId  String?
+  notes       String?
+  periodStart DateTime?
+  periodEnd   DateTime?
+  paidAt      DateTime?
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  items PayoutItem[]
+
+  @@index([storeId, status])
+  @@index([affiliateId, status])
+  @@index([createdAt])
+}
+
+/// Join table: which sales were included in a payout.
+model PayoutItem {
+  id       String @id @default(cuid())
+  payoutId String
+  payout   Payout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  saleId   String
+  sale     Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  amount   Decimal @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([payoutId, saleId])
+  @@index([saleId])
+}
