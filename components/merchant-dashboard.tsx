@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Badge,
   Banner,
@@ -32,6 +32,8 @@ import type { MerchantDashboardData } from "@/lib/dashboard";
 type Props = {
   data: MerchantDashboardData;
   showOnboarding?: boolean;
+  /** Short-lived signed token from the server (works in Admin iframes without cookies) */
+  actionToken?: string | null;
 };
 
 function StatusPill({
@@ -68,14 +70,17 @@ function StatusPill({
   );
 }
 
-export function MerchantDashboard({ data, showOnboarding = false }: Props) {
+export function MerchantDashboard({
+  data,
+  showOnboarding = false,
+  actionToken = null,
+}: Props) {
   const [copied, setCopied] = useState<"brand" | "script" | null>(null);
   const [brandKeyInput, setBrandKeyInput] = useState(
     data.store?.brandKey ?? "",
   );
   const [saving, setSaving] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
-  const [sessionReady, setSessionReady] = useState(false);
   const [banner, setBanner] = useState<{
     tone: "success" | "warning" | "critical" | "info";
     title: string;
@@ -88,31 +93,15 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
   const webPixelOk = data.tracking.webPixel === "ok";
   const trackingActive = scriptOk || webPixelOk || webhooksOk;
 
-  // Ensure browser has a valid shop session cookie (fixed encoding) after install
-  useEffect(() => {
-    if (!data.shop || data.needsInstall) {
-      setSessionReady(true);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        await fetch("/api/session/establish", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ shop: data.shop }),
-        });
-      } catch {
-        /* non-fatal */
-      } finally {
-        if (!cancelled) setSessionReady(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
+  const authHeaders = useCallback((): HeadersInit => {
+    const h: Record<string, string> = {
+      "Content-Type": "application/json",
     };
-  }, [data.shop, data.needsInstall]);
+    if (actionToken) {
+      h.Authorization = `Bearer ${actionToken}`;
+    }
+    return h;
+  }, [actionToken]);
 
   const copy = useCallback(async (text: string, which: "brand" | "script") => {
     try {
@@ -129,22 +118,15 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
     setSaving(true);
     setBanner(null);
     try {
-      // Ensure session cookie before settings call
-      await fetch("/api/session/establish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ shop: data.shop }),
-      });
-
       const res = await fetch("/api/store/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         credentials: "include",
         body: JSON.stringify({
           shop: data.shop,
           brandKey: brandKeyInput.trim(),
           reprovision: true,
+          actionToken: actionToken || undefined,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -172,36 +154,22 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [brandKeyInput, data.shop]);
+  }, [authHeaders, brandKeyInput, data.shop, actionToken]);
 
   const reProvision = useCallback(async () => {
     if (!data.shop) return;
     setProvisioning(true);
     setBanner(null);
     try {
-      // Establish session first (fixes missing/legacy cookie → 401)
-      const est = await fetch("/api/session/establish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ shop: data.shop }),
-      });
-      if (!est.ok) {
-        const estBody = await est.json().catch(() => ({}));
-        setBanner({
-          tone: "warning",
-          title: "Couldn’t start session",
-          message:
-            estBody.error ||
-            "Please reinstall the app so we can store a Shopify access token.",
-        });
-        return;
-      }
-
       const qs = new URLSearchParams({ shop: data.shop });
       const res = await fetch(`/api/admin/provision?${qs.toString()}`, {
         method: "POST",
+        headers: authHeaders(),
         credentials: "include",
+        body: JSON.stringify({
+          shop: data.shop,
+          actionToken: actionToken || undefined,
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -221,10 +189,10 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
         tone: errCount ? "warning" : "success",
         title: errCount ? "Tracking partially updated" : "Tracking refreshed",
         message: errCount
-          ? `Some steps failed: ${(body.errors as string[]).slice(0, 2).join(" · ")}`
+          ? `Some steps failed: ${(body.errors as string[]).slice(0, 3).join(" · ")}`
           : "Script tag, web pixel, and webhooks were updated.",
       });
-      window.setTimeout(() => window.location.reload(), 1000);
+      window.setTimeout(() => window.location.reload(), 1200);
     } catch (e) {
       setBanner({
         tone: "critical",
@@ -234,7 +202,7 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
     } finally {
       setProvisioning(false);
     }
-  }, [data.shop]);
+  }, [authHeaders, data.shop, actionToken]);
 
   const nextSteps = useMemo(() => {
     const steps: Array<{ done: boolean; title: string; detail: string }> = [
@@ -405,7 +373,7 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
                     <Button
                       onClick={reProvision}
                       loading={provisioning}
-                      disabled={!sessionReady || provisioning}
+                      disabled={provisioning || !actionToken}
                     >
                       Refresh tracking
                     </Button>

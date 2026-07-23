@@ -9,23 +9,23 @@ import { provisionStoreTracking } from "@/lib/provision-tracking";
 /**
  * Re-run ScriptTag + Web Pixel + webhook install for a connected shop.
  *
- * POST /api/admin/provision?shop=lftesting.myshopify.com
- * Auth: signed lf_shop_session cookie (set at OAuth) or DEBUG_SECRET
+ * POST /api/admin/provision?shop=…
+ * Auth (production): Authorization: Bearer <shop action token>
+ *   or lf_shop_session cookie, or DEBUG_SECRET
  *
- * Uses the Store.accessToken from the database (not the session cookie).
+ * Uses Store.accessToken from DB (refreshed/migrated as needed).
  */
 export async function POST(request: NextRequest) {
-  let shopParam = request.nextUrl.searchParams.get("shop");
-
-  if (!shopParam) {
-    try {
-      const body = (await request.json()) as { shop?: string };
-      shopParam = body.shop ?? null;
-    } catch {
-      /* no body */
-    }
+  // Clone body once — request.json() can only be read once
+  let body: { shop?: string; actionToken?: string } = {};
+  try {
+    body = (await request.json()) as { shop?: string; actionToken?: string };
+  } catch {
+    /* query-only */
   }
 
+  const shopParam =
+    request.nextUrl.searchParams.get("shop") || body.shop || null;
   const shop = normalizeShop(shopParam || "");
   if (!shop) {
     return NextResponse.json({ error: "shop required" }, { status: 400 });
@@ -47,19 +47,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "No Shopify access token stored for this shop. Please reinstall the app from /auth/login.",
+          "No Shopify access token stored. Please reinstall the app so OAuth can save an expiring offline token.",
         code: "missing_access_token",
       },
       { status: 401 },
     );
   }
 
-  const authorized = await isAuthorizedForShop(shop, request);
+  const authorized = await isAuthorizedForShop(shop, request, {
+    actionToken: body.actionToken,
+  });
   if (!authorized) {
     return NextResponse.json(
       {
         error:
-          "Unauthorized — open the app after install (session cookie missing) or reinstall. If this persists, set DEBUG_SECRET and pass ?key=…",
+          "Unauthorized — open the app from Shopify Admin so a valid action token is issued, or reinstall after updating scopes.",
         code: "session_unauthorized",
       },
       { status: 401 },
@@ -77,7 +79,6 @@ export async function POST(request: NextRequest) {
       ...result,
     });
 
-    // Refresh/fix session cookie (new format) so subsequent calls succeed
     setShopSessionCookie(response, store.shop);
     return response;
   } catch (e) {
@@ -92,11 +93,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** Helpful if someone hits the URL in a browser */
 export async function GET() {
   return NextResponse.json(
     {
-      error: "Use POST /api/admin/provision?shop=your-store.myshopify.com",
+      error: "Use POST with shop + Authorization: Bearer <actionToken>",
       method: "POST",
     },
     { status: 405 },

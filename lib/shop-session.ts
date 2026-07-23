@@ -123,14 +123,83 @@ export function clearShopSessionCookie(response: NextResponse): void {
 }
 
 /**
+ * Short-lived signed action token for embedded Admin iframes.
+ * Cookies often fail as third-party in Shopify Admin; this token is passed
+ * as Authorization: Bearer and does not rely on cookies.
+ * Format: base64url({shop,exp}).sig  — valid ~2 hours
+ */
+export function createShopActionToken(
+  shop: string,
+  ttlSeconds = 2 * 60 * 60,
+): string {
+  const normalized = normalizeShop(shop);
+  if (!normalized) {
+    throw new Error("Invalid shop for action token");
+  }
+  const exp = Date.now() + ttlSeconds * 1000;
+  const payload = Buffer.from(
+    JSON.stringify({ shop: normalized, exp }),
+    "utf8",
+  ).toString("base64url");
+  return `${payload}.${sign(payload)}`;
+}
+
+export function verifyShopActionToken(
+  token: string | null | undefined,
+  expectedShop: string,
+): boolean {
+  if (!token) return false;
+  const normalized = normalizeShop(expectedShop);
+  if (!normalized) return false;
+
+  const lastDot = token.lastIndexOf(".");
+  if (lastDot <= 0) return false;
+  const payload = token.slice(0, lastDot);
+  const sig = token.slice(lastDot + 1);
+  const expected = sign(payload);
+  try {
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
+  } catch {
+    return false;
+  }
+
+  try {
+    const json = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as { shop?: string; exp?: number };
+    if (!json.shop || !json.exp) return false;
+    if (json.exp < Date.now()) return false;
+    return normalizeShop(json.shop) === normalized;
+  } catch {
+    return false;
+  }
+}
+
+function extractBearerToken(request?: NextRequest): string | null {
+  if (!request) return null;
+  const auth = request.headers.get("authorization") || "";
+  if (auth.toLowerCase().startsWith("bearer ")) {
+    return auth.slice(7).trim();
+  }
+  return (
+    request.headers.get("x-shop-action-token") ||
+    request.nextUrl.searchParams.get("actionToken")
+  );
+}
+
+/**
  * True if request is allowed to manage this shop:
  * - non-production, or
  * - DEBUG_SECRET key matches, or
+ * - valid signed action token (Bearer / header / options.actionToken) for this shop, or
  * - valid signed lf_shop_session cookie for this shop
  */
 export async function isAuthorizedForShop(
   shop: string,
   request?: NextRequest,
+  options?: { actionToken?: string | null },
 ): Promise<boolean> {
   const normalized = normalizeShop(shop);
   if (!normalized) return false;
@@ -142,7 +211,17 @@ export async function isAuthorizedForShop(
   const key =
     request?.nextUrl.searchParams.get("key") ||
     request?.headers.get("x-debug-secret");
-  if (process.env.DEBUG_SECRET?.trim() && key === process.env.DEBUG_SECRET.trim()) {
+  if (
+    process.env.DEBUG_SECRET?.trim() &&
+    key === process.env.DEBUG_SECRET.trim()
+  ) {
+    return true;
+  }
+
+  // Preferred for embedded Admin (no third-party cookies)
+  const actionToken =
+    options?.actionToken || extractBearerToken(request) || null;
+  if (verifyShopActionToken(actionToken, normalized)) {
     return true;
   }
 

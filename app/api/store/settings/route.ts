@@ -12,10 +12,15 @@ import {
 
 /**
  * Update store settings (brandKey) and re-provision tracking.
- * POST { shop, brandKey, reprovision?: true }
+ * POST { shop, brandKey, reprovision?: true, actionToken?: string }
  */
 export async function POST(request: NextRequest) {
-  let body: { shop?: string; brandKey?: string; reprovision?: boolean };
+  let body: {
+    shop?: string;
+    brandKey?: string;
+    reprovision?: boolean;
+    actionToken?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -27,8 +32,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "shop is required" }, { status: 400 });
   }
 
-  // Allow establish-first: if no session, still require store ACTIVE + we'll set cookie on success
-  // For brand key changes we require session OR we allow if store has token (same as establish)
   const store = await getStoreByShop(shop);
   if (!store || store.status !== "ACTIVE") {
     return NextResponse.json(
@@ -37,15 +40,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let authorized = await isAuthorizedForShop(shop, request);
-  // Bootstrap: if no cookie yet but store is installed, allow once and set cookie
-  // (same trust model as session/establish for merchant dashboard UX)
-  if (!authorized && store.accessToken?.trim()) {
-    authorized = true;
-  }
-
+  const authorized = await isAuthorizedForShop(shop, request, {
+    actionToken: body.actionToken,
+  });
   if (!authorized) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      {
+        error:
+          "Unauthorized — open the app from Shopify Admin (action token required in embedded mode).",
+      },
+      { status: 401 },
+    );
   }
 
   if (!store.accessToken?.trim()) {
@@ -60,7 +65,10 @@ export async function POST(request: NextRequest) {
 
   try {
     let updated = store;
-    if (body.brandKey != null && body.brandKey.trim() !== (store.brandKey ?? "")) {
+    if (
+      body.brandKey != null &&
+      body.brandKey.trim() !== (store.brandKey ?? "")
+    ) {
       updated = await updateStoreBrandKey(shop, body.brandKey);
     }
 
