@@ -285,6 +285,18 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
           </Banner>
         ) : null}
 
+        <Banner tone="info" title="How we use your store data">
+          <p>
+            Link Flow records order ID, amount, products, referral code, and
+            shop domain for affiliate attribution and commissions. We do{" "}
+            <strong>not</strong> collect customer name, email, address, or
+            phone, and we do not sell personal data.{" "}
+            <Link url="/privacy" target="_blank">
+              Read our Privacy Policy
+            </Link>
+          </p>
+        </Banner>
+
         {banner ? (
           <Banner
             title={banner.title}
@@ -512,6 +524,24 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
                 </BlockStack>
               </Card>
             </InlineGrid>
+          </Layout.Section>
+
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">
+                  Privacy
+                </Text>
+                <Text as="p" tone="subdued">
+                  We only use order and referral data to power affiliate
+                  tracking. Questions or deletion requests:{" "}
+                  <Link url="mailto:support@linkflowaffiliates.com">
+                    support@linkflowaffiliates.com
+                  </Link>
+                </Text>
+                <Link url="/privacy">Full Privacy Policy</Link>
+              </BlockStack>
+            </Card>
           </Layout.Section>
 
           <Layout.Section>

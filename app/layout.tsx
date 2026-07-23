@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   description: "Shopify affiliate tracking and attribution for your store",
 };
 
+// Privacy policy is public at /privacy for Partner Dashboard + merchant review
+
 export default function RootLayout({
   children,
 }: Readonly<{

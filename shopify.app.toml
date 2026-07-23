@@ -21,3 +21,11 @@ redirect_urls = [
 
 [webhooks]
 api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled", "orders/paid", "orders/create" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"

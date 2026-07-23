@@ -118,7 +118,15 @@ export async function provisionStoreTracking(
 
   // ── Webhooks (server-side order backup) ───────────────────────────────────
   const webhookAddress = getWebhookCallbackUrl("/api/webhooks/shopify");
-  const topics = ["orders/paid", "orders/create", "app/uninstalled"] as const;
+  // Orders + uninstall + Shopify mandatory privacy compliance topics
+  const topics = [
+    "orders/paid",
+    "orders/create",
+    "app/uninstalled",
+    "customers/data_request",
+    "customers/redact",
+    "shop/redact",
+  ] as const;
 
   try {
     const existingHooks = await listWebhooks(store.shop, store.accessToken);

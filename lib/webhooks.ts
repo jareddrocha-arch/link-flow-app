@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "crypto";
+import { handleComplianceWebhook } from "@/lib/compliance";
 import { recordStoreSale } from "@/lib/record-sale";
 import { normalizeShop } from "@/lib/stores";
 import { cleanupShopUninstall } from "@/lib/uninstall";
@@ -89,6 +90,19 @@ export async function handleShopifyWebhook(options: {
         result.errors.length ? `errors=${result.errors.length}` : "ok",
       ].join(" "),
     };
+  }
+
+  // Mandatory GDPR / privacy compliance webhooks
+  if (
+    topic === "customers/data_request" ||
+    topic === "customers/redact" ||
+    topic === "shop/redact"
+  ) {
+    return handleComplianceWebhook({
+      topic,
+      shopDomain: shop,
+      payload: options.payload,
+    });
   }
 
   if (topic === "orders/paid" || topic === "orders/create") {
