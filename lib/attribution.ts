@@ -27,8 +27,19 @@ function faReadReferralCode(){faCaptureFirstClickFromUrl();var s=faReadStored();
 
 /** Public origin for embedding in third-party storefront scripts. */
 export function getPublicSiteUrl(requestOrigin?: string): string {
-  const fromEnv = process.env.HOST?.replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
+  // Prefer HOST so ScriptTags on merchant shops always hit production, not localhost
+  const fromEnv = process.env.HOST?.trim().replace(/\/$/, "");
+  if (fromEnv) {
+    try {
+      if (!/^https?:\/\//i.test(fromEnv)) return `https://${fromEnv}`;
+      return new URL(fromEnv).origin;
+    } catch {
+      return fromEnv;
+    }
+  }
   if (requestOrigin) return requestOrigin.replace(/\/$/, "");
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/^https?:\/\//, "")}`;
+  }
   return "http://localhost:3000";
 }

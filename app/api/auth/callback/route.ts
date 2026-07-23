@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearOAuthCookies, completeOAuth } from "@/lib/oauth";
+import { provisionStoreTracking } from "@/lib/provision-tracking";
 import { setShopSessionCookie } from "@/lib/shop-session";
 import { upsertStoreFromOAuth } from "@/lib/stores";
 
 /**
- * Complete Shopify OAuth, persist Store in Postgres (Supabase via Prisma),
- * and set a signed shop session cookie.
- *
+ * Complete Shopify OAuth, persist Store, inject tracking ScriptTag + webhooks.
  * Redirect URI: {HOST}/api/auth/callback
  */
 export async function GET(request: NextRequest) {
@@ -24,12 +23,26 @@ export async function GET(request: NextRequest) {
 
     const { session } = result;
 
-    // Persist offline token + shop metadata in Supabase
     const store = await upsertStoreFromOAuth({
       shop: session.shop,
       accessToken: session.accessToken!,
       scopes: session.scope ?? process.env.SCOPES ?? "",
     });
+
+    // Automatic tracking injection (ScriptTag + order webhooks)
+    let provision: Awaited<ReturnType<typeof provisionStoreTracking>> | null =
+      null;
+    try {
+      provision = await provisionStoreTracking(store);
+      console.info("[oauth/callback] tracking provisioned", {
+        shop: store.shop,
+        scriptTagId: provision.scriptTagId,
+        webhooks: provision.webhooks,
+        errors: provision.errors,
+      });
+    } catch (e) {
+      console.error("[oauth/callback] provision failed (install still ok)", e);
+    }
 
     console.info("[oauth/callback] store upserted", {
       storeId: store.id,
@@ -44,6 +57,12 @@ export async function GET(request: NextRequest) {
     if (store.brandKey) {
       redirectUrl.searchParams.set("brandKey", store.brandKey);
     }
+    if (provision?.scriptTagId) {
+      redirectUrl.searchParams.set("scriptTag", "1");
+    }
+    if (provision?.webhooks?.length) {
+      redirectUrl.searchParams.set("webhooks", provision.webhooks.join(","));
+    }
 
     const response = NextResponse.redirect(redirectUrl);
     clearOAuthCookies(response);
@@ -55,7 +74,8 @@ export async function GET(request: NextRequest) {
     loginUrl.searchParams.set("error", "oauth_callback_failed");
     loginUrl.searchParams.set(
       "reason",
-      error instanceof Error && /DATABASE_URL|Prisma|connect/i.test(error.message)
+      error instanceof Error &&
+        /DATABASE_URL|Prisma|connect/i.test(error.message)
         ? "database_error"
         : "unexpected",
     );

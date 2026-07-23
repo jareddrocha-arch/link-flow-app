@@ -66,6 +66,12 @@ model Store {
   uninstalledAt DateTime?
   /// Last successful OAuth / token refresh
   tokenUpdatedAt DateTime  @default(now())
+  /// Shopify ScriptTag id for storefront tracking script
+  scriptTagId  String?
+  /// When ScriptTag was last ensured on the shop
+  trackingInstalledAt DateTime?
+  /// When order/app webhooks were last registered
+  webhooksInstalledAt DateTime?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 

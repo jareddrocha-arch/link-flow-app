@@ -1,7 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  async rewrites() {
+    return [
+      // Clean ScriptTag URL: /tracking.js?k=fb_… → App Router handler
+      {
+        source: "/tracking.js",
+        destination: "/api/tracking.js",
+      },
+    ];
+  },
 };
 
 export default nextConfig;

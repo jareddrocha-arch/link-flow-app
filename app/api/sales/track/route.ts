@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  recordTrackedSale,
-  resolveBrandByTrackingKey,
-} from "@/lib/brand-key";
 import { corsHeadersForTracking } from "@/lib/cors-tracking";
 import { getLinkFlowSalesTrackUrl } from "@/lib/link-flow-api";
+import { recordStoreSale } from "@/lib/record-sale";
 import { validateTrackSaleBody } from "@/lib/validations/track-sale";
 
 const MAX_JSON_BYTES = 100 * 1024;
@@ -27,24 +24,9 @@ export async function OPTIONS() {
 }
 
 /**
- * Thank You page sale tracking.
- *
- * Brands' confirmation pages POST order data here (via tracking.js or inline snippet).
- * Auth is the brandKey (fb_…) from the Link Flow brandKey system.
- *
- * Forwards to the main Link Flow backend when available:
- *   https://www.linkflowaffiliates.com/api/sales/track
- *
- * Body:
- * {
- *   brandKey: "fb_…",
- *   productId: "auto" | storefront product id,
- *   amount: 99.00,
- *   orderId?: "1234",
- *   referralCode?: "fa-…",
- *   productName?: "…",
- *   pageUrl?: "…"
- * }
+ * Thank You / storefront sale tracking.
+ * Auth: brandKey (fb_…) must match an installed Store.
+ * Also optionally forwards to main Link Flow platform when configured.
  */
 export async function POST(request: NextRequest) {
   const contentLength = request.headers.get("content-length");
@@ -81,15 +63,28 @@ export async function POST(request: NextRequest) {
     pageUrl,
   } = parsed.data;
 
-  // Local format check first; upstream does authoritative brand lookup
-  const brand = resolveBrandByTrackingKey(brandKey);
-  if (!brand) {
-    return jsonWithCors({ error: "Invalid brand tracking key" }, { status: 401 });
+  // Primary: record against this app's Supabase Store
+  const local = await recordStoreSale({
+    brandKey,
+    amount,
+    orderId,
+    productId,
+    productName,
+    referralCode,
+    pageUrl,
+    source: "script",
+  });
+
+  if (!local.ok) {
+    return jsonWithCors({ error: local.error }, { status: local.status });
   }
 
+  // Optional forward to main Link Flow platform (commissions network)
   const upstreamUrl = getLinkFlowSalesTrackUrl();
+  let forwarded = false;
+  let upstreamBody: unknown = null;
 
-  if (upstreamUrl) {
+  if (upstreamUrl && process.env.LINK_FLOW_FORWARD !== "false") {
     try {
       const upstreamRes = await fetch(upstreamUrl, {
         method: "POST",
@@ -98,75 +93,23 @@ export async function POST(request: NextRequest) {
           Accept: "application/json",
         },
         body: JSON.stringify(parsed.data),
-        // Avoid hanging the thank-you page forever
         signal: AbortSignal.timeout(12_000),
       });
-
-      const upstreamBody = await upstreamRes.json().catch(() => ({
-        error: "Invalid upstream response",
-      }));
-
-      // Mirror successful (and duplicate) tracks locally for app debugging
-      if (upstreamRes.ok) {
-        recordTrackedSale({
-          brand,
-          productId,
-          amount,
-          orderId,
-          productName,
-          referralCode,
-          pageUrl,
-        });
-      } else {
-        console.warn("Link Flow track upstream error:", {
-          status: upstreamRes.status,
-          body: upstreamBody,
-          brandKey,
-          orderId,
-        });
-      }
-
-      return jsonWithCors(upstreamBody, { status: upstreamRes.status });
+      upstreamBody = await upstreamRes.json().catch(() => null);
+      forwarded = upstreamRes.ok;
     } catch (error) {
-      console.error("Upstream track failed, falling back to local record:", error);
-
-      // Offline / network failure: still accept locally so brand scripts don't hard-fail
-      const sale = recordTrackedSale({
-        brand,
-        productId,
-        amount,
-        orderId,
-        productName,
-        referralCode,
-        pageUrl,
-      });
-
-      return jsonWithCors({
-        success: true,
-        duplicate: sale.duplicate ?? false,
-        saleId: sale.id,
-        productId: sale.productId,
-        warning: "Recorded locally; Link Flow backend unreachable",
-        forwarded: false,
-      });
+      console.warn("Upstream track failed (local sale kept):", error);
     }
   }
 
-  const sale = recordTrackedSale({
-    brand,
-    productId,
-    amount,
-    orderId,
-    productName,
-    referralCode,
-    pageUrl,
-  });
-
   return jsonWithCors({
     success: true,
-    duplicate: sale.duplicate ?? false,
-    saleId: sale.id,
-    productId: sale.productId,
-    forwarded: false,
+    duplicate: local.duplicate,
+    saleId: local.saleId,
+    shop: local.shop,
+    productId: productId || "auto",
+    commission: local.commission,
+    forwarded,
+    upstream: upstreamBody,
   });
 }

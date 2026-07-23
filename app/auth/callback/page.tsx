@@ -6,6 +6,8 @@ type CallbackPageProps = {
     shop?: string;
     installed?: string;
     brandKey?: string;
+    scriptTag?: string;
+    webhooks?: string;
   }>;
 };
 
@@ -14,6 +16,8 @@ export default async function CallbackPage({ searchParams }: CallbackPageProps) 
   const shop = params.shop;
   const brandKeyFromQuery = params.brandKey;
   const installed = params.installed === "1";
+  const scriptTagOk = params.scriptTag === "1";
+  const webhooks = params.webhooks?.split(",").filter(Boolean) ?? [];
 
   // Live DB check so success page proves the Store row exists
   let dbStore: Awaited<ReturnType<typeof getStoreByShop>> = null;
@@ -70,6 +74,29 @@ export default async function CallbackPage({ searchParams }: CallbackPageProps) 
                 </p>
               </>
             )}
+          </div>
+
+          <div className="mt-3 space-y-1 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+            <p className="font-medium text-sm">Automatic tracking setup</p>
+            <p>
+              ScriptTag:{" "}
+              {scriptTagOk || dbStore?.scriptTagId
+                ? "injected on storefront ✓"
+                : "not confirmed (ensure write_script_tags scope, then reinstall)"}
+            </p>
+            <p>
+              Webhooks:{" "}
+              {webhooks.length
+                ? webhooks.join(", ")
+                : dbStore?.webhooksInstalledAt
+                  ? "registered ✓"
+                  : "none confirmed"}
+            </p>
+            {brandKey ? (
+              <p className="break-all text-zinc-500">
+                Script: /tracking.js?k={brandKey}
+              </p>
+            ) : null}
           </div>
 
           <p className="mt-4 text-xs text-zinc-500">
