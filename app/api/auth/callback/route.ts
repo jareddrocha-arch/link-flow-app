@@ -51,14 +51,19 @@ export async function GET(request: NextRequest) {
       status: store.status,
     });
 
-    const redirectUrl = new URL("/auth/callback", request.url);
+    // Land on the embedded dashboard with onboarding UI
+    const redirectUrl = new URL("/", request.url);
     redirectUrl.searchParams.set("shop", store.shop);
     redirectUrl.searchParams.set("installed", "1");
+    redirectUrl.searchParams.set("onboarding", "1");
     if (store.brandKey) {
       redirectUrl.searchParams.set("brandKey", store.brandKey);
     }
     if (provision?.scriptTagId) {
       redirectUrl.searchParams.set("scriptTag", "1");
+    }
+    if (provision?.webPixelId) {
+      redirectUrl.searchParams.set("webPixel", "1");
     }
     if (provision?.webhooks?.length) {
       redirectUrl.searchParams.set("webhooks", provision.webhooks.join(","));

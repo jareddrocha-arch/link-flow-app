@@ -1,6 +1,7 @@
 import type { Store, StoreStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
+import { isValidBrandKey } from "@/lib/brand-key";
 
 export type UpsertStoreInput = {
   shop: string;
@@ -36,7 +37,6 @@ export async function upsertStoreFromOAuth(
         status: "ACTIVE",
         uninstalledAt: null,
         tokenUpdatedAt: now,
-        // Keep brandKey if already issued
         brandKey: existing.brandKey ?? generateBrandKey(),
       },
     });
@@ -57,8 +57,47 @@ export async function upsertStoreFromOAuth(
 }
 
 /**
- * @deprecated Prefer cleanupShopUninstall() for full ScriptTag/pixel/session cleanup.
- * Kept for simple status flips if needed.
+ * Update brandKey for an active store (merchant confirm / link to Link Flow account).
+ */
+export async function updateStoreBrandKey(
+  shop: string,
+  brandKey: string,
+): Promise<Store> {
+  const normalized = normalizeShop(shop);
+  if (!normalized) {
+    throw new Error("Invalid shop domain");
+  }
+
+  const key = brandKey.trim();
+  if (!isValidBrandKey(key)) {
+    throw new Error(
+      "Invalid brand key. It must start with fb_ and be 10–64 characters.",
+    );
+  }
+
+  const store = await prisma.store.findUnique({ where: { shop: normalized } });
+  if (!store || store.status !== "ACTIVE") {
+    throw new Error("Store not found or not active");
+  }
+
+  const conflict = await prisma.store.findFirst({
+    where: {
+      brandKey: key,
+      NOT: { id: store.id },
+    },
+  });
+  if (conflict) {
+    throw new Error("That brand key is already linked to another store");
+  }
+
+  return prisma.store.update({
+    where: { id: store.id },
+    data: { brandKey: key },
+  });
+}
+
+/**
+ * @deprecated Prefer cleanupShopUninstall() for full cleanup.
  */
 export async function markStoreUninstalled(shop: string): Promise<Store | null> {
   const normalized = normalizeShop(shop);
@@ -97,10 +136,6 @@ export async function getStoreByBrandKey(brandKey: string): Promise<Store | null
   return prisma.store.findUnique({ where: { brandKey: key } });
 }
 
-/**
- * Offline Admin API access token for a shop.
- * Returns null if store missing, uninstalled, or token empty.
- */
 export async function getStoreAccessToken(
   shop: string,
 ): Promise<string | null> {
@@ -128,9 +163,7 @@ export function normalizeShop(shop: string): string | null {
     .replace(/^https?:\/\//, "")
     .replace(/\/$/, "");
   if (!cleaned) return null;
-  // Basic myshopify.com shape
   if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(cleaned)) {
-    // Allow bare store name
     if (/^[a-z0-9][a-z0-9-]*$/.test(cleaned)) {
       return `${cleaned}.myshopify.com`;
     }
@@ -139,7 +172,6 @@ export function normalizeShop(shop: string): string | null {
   return cleaned;
 }
 
-/** Same format as Link Flow main platform brand keys. */
 function generateBrandKey(): string {
   return `fb_${randomBytes(16).toString("base64url").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24)}`;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Badge,
   Banner,
@@ -10,11 +10,13 @@ import {
   Card,
   DataTable,
   EmptyState,
+  FormLayout,
   Icon,
   InlineGrid,
   InlineStack,
   Layout,
   Link,
+  List,
   Page,
   Text,
   TextField,
@@ -29,13 +31,61 @@ import type { MerchantDashboardData } from "@/lib/dashboard";
 
 type Props = {
   data: MerchantDashboardData;
-  debugSecret?: string | null;
+  showOnboarding?: boolean;
 };
 
-export function MerchantDashboard({ data, debugSecret }: Props) {
+function StatusPill({
+  ok,
+  label,
+  okText,
+  badText,
+}: {
+  ok: boolean;
+  label: string;
+  okText: string;
+  badText: string;
+}) {
+  return (
+    <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+      <BlockStack gap="200">
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          <Icon
+            source={ok ? CheckCircleIcon : AlertCircleIcon}
+            tone={ok ? "success" : "caution"}
+          />
+          <Text as="span" fontWeight="semibold">
+            {label}
+          </Text>
+          <Badge tone={ok ? "success" : "attention"}>
+            {ok ? "Ready" : "Needs setup"}
+          </Badge>
+        </InlineStack>
+        <Text as="p" tone="subdued" variant="bodySm">
+          {ok ? okText : badText}
+        </Text>
+      </BlockStack>
+    </Box>
+  );
+}
+
+export function MerchantDashboard({ data, showOnboarding = false }: Props) {
   const [copied, setCopied] = useState<"brand" | "script" | null>(null);
+  const [brandKeyInput, setBrandKeyInput] = useState(
+    data.store?.brandKey ?? "",
+  );
+  const [saving, setSaving] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
-  const [provisionMsg, setProvisionMsg] = useState<string | null>(null);
+  const [banner, setBanner] = useState<{
+    tone: "success" | "warning" | "critical" | "info";
+    title: string;
+    message: string;
+  } | null>(null);
+
+  const store = data.store;
+  const scriptOk = data.tracking.scriptTag === "ok";
+  const webhooksOk = data.tracking.webhooks === "ok";
+  const webPixelOk = data.tracking.webPixel === "ok";
+  const trackingActive = scriptOk || webPixelOk || webhooksOk;
 
   const copy = useCallback(async (text: string, which: "brand" | "script") => {
     try {
@@ -47,34 +97,113 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
     }
   }, []);
 
+  const saveBrandKey = useCallback(async () => {
+    if (!data.shop) return;
+    setSaving(true);
+    setBanner(null);
+    try {
+      const res = await fetch("/api/store/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shop: data.shop,
+          brandKey: brandKeyInput.trim(),
+          reprovision: true,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBanner({
+          tone: "critical",
+          title: "Couldn’t save brand key",
+          message: body.error || "Please check the key and try again.",
+        });
+        return;
+      }
+      setBanner({
+        tone: "success",
+        title: "Brand key saved",
+        message:
+          "Tracking was updated to use this key. You’re ready to track sales.",
+      });
+      window.setTimeout(() => window.location.reload(), 800);
+    } catch (e) {
+      setBanner({
+        tone: "critical",
+        title: "Something went wrong",
+        message: e instanceof Error ? e.message : "Please try again.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [brandKeyInput, data.shop]);
+
   const reProvision = useCallback(async () => {
     if (!data.shop) return;
     setProvisioning(true);
-    setProvisionMsg(null);
+    setBanner(null);
     try {
       const qs = new URLSearchParams({ shop: data.shop });
-      if (debugSecret) qs.set("key", debugSecret);
       const res = await fetch(`/api/admin/provision?${qs.toString()}`, {
         method: "POST",
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setProvisionMsg(body.error || "Failed to re-install tracking");
-      } else {
-        setProvisionMsg(
-          `Tracking updated. ScriptTag: ${body.scriptTagId ?? "n/a"}. Webhooks: ${(body.webhooks || []).join(", ") || "none"}.`,
-        );
-        // Refresh so statuses update
-        window.location.reload();
+        setBanner({
+          tone: "warning",
+          title: "Couldn’t refresh tracking",
+          message: body.error || "Try again or reinstall the app.",
+        });
+        return;
       }
+      setBanner({
+        tone: "success",
+        title: "Tracking refreshed",
+        message: "Script tag, web pixel, and webhooks were updated.",
+      });
+      window.setTimeout(() => window.location.reload(), 800);
     } catch (e) {
-      setProvisionMsg(e instanceof Error ? e.message : "Request failed");
+      setBanner({
+        tone: "critical",
+        title: "Request failed",
+        message: e instanceof Error ? e.message : "Please try again.",
+      });
     } finally {
       setProvisioning(false);
     }
-  }, [data.shop, debugSecret]);
+  }, [data.shop]);
 
-  if (data.needsInstall || !data.store) {
+  const nextSteps = useMemo(() => {
+    const steps: Array<{ done: boolean; title: string; detail: string }> = [
+      {
+        done: Boolean(store?.brandKey),
+        title: "Confirm your brand key",
+        detail:
+          "This links Shopify sales to your Link Flow Affiliates account.",
+      },
+      {
+        done: trackingActive,
+        title: "Tracking is installed on your store",
+        detail: trackingActive
+          ? "Script tag, web pixel, and/or webhooks are active."
+          : "Click “Refresh tracking” if something shows as missing.",
+      },
+      {
+        done: data.sales.totalCount > 0,
+        title: "Make a test order",
+        detail:
+          "Place a small test order on your storefront. It should appear under Recent sales below.",
+      },
+      {
+        done: false,
+        title: "Open the full Link Flow dashboard",
+        detail: "Manage affiliates, commissions, and payouts on Link Flow.",
+      },
+    ];
+    return steps;
+  }, [store?.brandKey, trackingActive, data.sales.totalCount]);
+
+  if (data.needsInstall || !store) {
     return (
       <Page title="Link Flow Affiliates">
         <Layout>
@@ -84,23 +213,19 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
                 heading={
                   data.shop
                     ? `Connect ${data.shop}`
-                    : "Install Link Flow on your store"
+                    : "Connect your Shopify store"
                 }
                 action={{
-                  content: "Install app",
+                  content: "Install Link Flow",
                   url: data.shop
                     ? `/api/auth?shop=${encodeURIComponent(data.shop)}`
                     : "/auth/login",
                 }}
-                secondaryAction={{
-                  content: "Open install page",
-                  url: "/auth/login",
-                }}
                 image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
               >
                 <p>
-                  Install Link Flow Affiliates to inject tracking automatically,
-                  attribute affiliate sales, and manage your brand key.
+                  Install once — we set up order tracking automatically so
+                  affiliate sales can be attributed without extra copy-paste.
                 </p>
               </EmptyState>
             </Card>
@@ -110,33 +235,32 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
     );
   }
 
-  const store = data.store;
-  const scriptOk = data.tracking.scriptTag === "ok";
-  const webhooksOk = data.tracking.webhooks === "ok";
-  const webPixelOk = data.tracking.webPixel === "ok";
-
   const salesRows = data.sales.recent.map((s) => [
-    s.orderId || s.id.slice(0, 8),
+    s.orderId || "—",
     s.amount,
     s.commission,
-    s.referralCode || "—",
+    s.referralCode || "Organic",
     s.status,
     new Date(s.createdAt).toLocaleString(),
   ]);
+
+  const brandDirty =
+    brandKeyInput.trim() !== "" &&
+    brandKeyInput.trim() !== (store.brandKey ?? "");
 
   return (
     <Page
       title="Link Flow Affiliates"
       subtitle={store.name}
       primaryAction={{
-        content: "Open Link Flow dashboard",
+        content: "Open Link Flow",
         url: data.linkFlowDashboardUrl,
         external: true,
         icon: ExternalIcon,
       }}
       secondaryActions={[
         {
-          content: provisioning ? "Updating…" : "Re-install tracking",
+          content: provisioning ? "Refreshing…" : "Refresh tracking",
           onAction: reProvision,
           loading: provisioning,
           disabled: provisioning,
@@ -144,50 +268,108 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
       ]}
     >
       <BlockStack gap="400">
-        {provisionMsg ? (
+        {showOnboarding || data.sales.totalCount === 0 ? (
           <Banner
-            title="Tracking setup"
-            tone={provisionMsg.startsWith("Tracking updated") ? "success" : "warning"}
-            onDismiss={() => setProvisionMsg(null)}
+            title={
+              trackingActive
+                ? "You’re all set — tracking is active"
+                : "Welcome! Let’s finish setup"
+            }
+            tone={trackingActive ? "success" : "info"}
           >
-            <p>{provisionMsg}</p>
+            <p>
+              {trackingActive
+                ? "Sales from your store will be recorded automatically. Confirm your brand key below, then place a test order when you’re ready."
+                : "We’ll help you confirm your brand key and make sure tracking is running on your store."}
+            </p>
+          </Banner>
+        ) : null}
+
+        {banner ? (
+          <Banner
+            title={banner.title}
+            tone={banner.tone}
+            onDismiss={() => setBanner(null)}
+          >
+            <p>{banner.message}</p>
           </Banner>
         ) : null}
 
         <Layout>
+          {/* Next steps */}
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Next steps
+                </Text>
+                <List type="number">
+                  {nextSteps.map((step) => (
+                    <List.Item key={step.title}>
+                      <InlineStack gap="200" blockAlign="start">
+                        <Badge tone={step.done ? "success" : "new"}>
+                          {step.done ? "Done" : "To do"}
+                        </Badge>
+                        <BlockStack gap="050">
+                          <Text as="span" fontWeight="semibold">
+                            {step.title}
+                          </Text>
+                          <Text as="span" tone="subdued" variant="bodySm">
+                            {step.detail}
+                          </Text>
+                        </BlockStack>
+                      </InlineStack>
+                    </List.Item>
+                  ))}
+                </List>
+                <InlineStack gap="200">
+                  <Button url={data.linkFlowDashboardUrl} external>
+                    Open Link Flow dashboard
+                  </Button>
+                  {!trackingActive ? (
+                    <Button onClick={reProvision} loading={provisioning}>
+                      Refresh tracking
+                    </Button>
+                  ) : null}
+                </InlineStack>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          {/* Store + brand key */}
           <Layout.Section>
             <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
               <Card>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">
-                    Store
+                    Your store
                   </Text>
-                  <BlockStack gap="200">
-                    <InlineStack gap="200" blockAlign="center">
+                  <BlockStack gap="150">
+                    <Text as="p">
                       <Text as="span" tone="subdued">
-                        Domain
+                        Name:{" "}
+                      </Text>
+                      <Text as="span" fontWeight="semibold">
+                        {store.name}
+                      </Text>
+                    </Text>
+                    <Text as="p">
+                      <Text as="span" tone="subdued">
+                        Domain:{" "}
                       </Text>
                       <Text as="span" fontWeight="semibold">
                         {store.shop}
                       </Text>
-                    </InlineStack>
+                    </Text>
                     <InlineStack gap="200" blockAlign="center">
                       <Text as="span" tone="subdued">
-                        Status
+                        App status
                       </Text>
                       <Badge
                         tone={store.status === "ACTIVE" ? "success" : "attention"}
                       >
-                        {store.status}
+                        {store.status === "ACTIVE" ? "Connected" : store.status}
                       </Badge>
-                    </InlineStack>
-                    <InlineStack gap="200" blockAlign="center">
-                      <Text as="span" tone="subdued">
-                        Installed
-                      </Text>
-                      <Text as="span">
-                        {new Date(store.installedAt).toLocaleDateString()}
-                      </Text>
                     </InlineStack>
                   </BlockStack>
                 </BlockStack>
@@ -199,172 +381,133 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
                     Brand key
                   </Text>
                   <Text as="p" tone="subdued">
-                    Used by the tracking script and thank-you page attribution.
+                    This is how Link Flow matches sales to your affiliate
+                    program. Use the key from your Link Flow brand account, or
+                    keep the one we generated.
                   </Text>
-                  {store.brandKey ? (
-                    <BlockStack gap="200">
-                      <Box
-                        padding="300"
-                        background="bg-surface-secondary"
-                        borderRadius="200"
+                  <FormLayout>
+                    <TextField
+                      label="Link Flow brand key"
+                      value={brandKeyInput}
+                      onChange={setBrandKeyInput}
+                      autoComplete="off"
+                      monospaced
+                      helpText="Usually starts with fb_"
+                      placeholder="fb_your_key_here"
+                    />
+                  </FormLayout>
+                  <InlineStack gap="200">
+                    <Button
+                      variant="primary"
+                      onClick={saveBrandKey}
+                      loading={saving}
+                      disabled={
+                        saving ||
+                        !brandKeyInput.trim() ||
+                        (!brandDirty && Boolean(store.brandKey))
+                      }
+                    >
+                      {store.brandKey ? "Save brand key" : "Save & activate"}
+                    </Button>
+                    {store.brandKey ? (
+                      <Button
+                        icon={ClipboardIcon}
+                        onClick={() => copy(store.brandKey!, "brand")}
                       >
-                        <Text as="p" variant="bodyMd" fontWeight="bold" breakWord>
-                          {store.brandKey}
-                        </Text>
-                      </Box>
-                      <InlineStack gap="200">
-                        <Button
-                          icon={ClipboardIcon}
-                          onClick={() => copy(store.brandKey!, "brand")}
-                        >
-                          {copied === "brand" ? "Copied" : "Copy brand key"}
-                        </Button>
-                        {data.trackingScriptUrl ? (
-                          <Button
-                            onClick={() =>
-                              copy(data.trackingScriptUrl!, "script")
-                            }
-                          >
-                            {copied === "script" ? "Copied" : "Copy script URL"}
-                          </Button>
-                        ) : null}
-                      </InlineStack>
-                    </BlockStack>
-                  ) : (
-                    <Banner tone="warning" title="No brand key">
-                      <p>Re-install the app to generate a brand key.</p>
-                    </Banner>
-                  )}
+                        {copied === "brand" ? "Copied" : "Copy"}
+                      </Button>
+                    ) : null}
+                  </InlineStack>
                 </BlockStack>
               </Card>
             </InlineGrid>
           </Layout.Section>
 
+          {/* Tracking status */}
           <Layout.Section>
             <Card>
               <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">
-                  Tracking status
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Tracking status
+                  </Text>
+                  <Badge tone={trackingActive ? "success" : "attention"}>
+                    {trackingActive ? "Tracking is active" : "Setup needed"}
+                  </Badge>
+                </InlineStack>
+                <Text as="p" tone="subdued">
+                  These run in the background. You don’t need to paste code
+                  into your theme for basic tracking.
                 </Text>
                 <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
-                  <Box
-                    padding="300"
-                    background="bg-surface-secondary"
-                    borderRadius="200"
-                  >
-                    <BlockStack gap="200">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Icon
-                          source={scriptOk ? CheckCircleIcon : AlertCircleIcon}
-                          tone={scriptOk ? "success" : "caution"}
-                        />
-                        <Text as="span" fontWeight="semibold">
-                          ScriptTag
-                        </Text>
-                        <Badge tone={scriptOk ? "success" : "attention"}>
-                          {scriptOk ? "Active" : "Missing"}
-                        </Badge>
-                      </InlineStack>
-                      <Text as="p" tone="subdued" variant="bodySm">
-                        {scriptOk
-                          ? `Storefront first-click · ${store.scriptTagId ?? "—"}`
-                          : "Storefront script not injected. Re-install tracking."}
-                      </Text>
-                    </BlockStack>
-                  </Box>
-
-                  <Box
-                    padding="300"
-                    background="bg-surface-secondary"
-                    borderRadius="200"
-                  >
-                    <BlockStack gap="200">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Icon
-                          source={webPixelOk ? CheckCircleIcon : AlertCircleIcon}
-                          tone={webPixelOk ? "success" : "caution"}
-                        />
-                        <Text as="span" fontWeight="semibold">
-                          Web Pixel
-                        </Text>
-                        <Badge tone={webPixelOk ? "success" : "attention"}>
-                          {webPixelOk ? "Connected" : "Missing"}
-                        </Badge>
-                      </InlineStack>
-                      <Text as="p" tone="subdued" variant="bodySm">
-                        {webPixelOk
-                          ? `Thank-you / checkout_completed · every order`
-                          : "Deploy extension + reinstall (needs write_pixels)."}
-                      </Text>
-                    </BlockStack>
-                  </Box>
-
-                  <Box
-                    padding="300"
-                    background="bg-surface-secondary"
-                    borderRadius="200"
-                  >
-                    <BlockStack gap="200">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Icon
-                          source={webhooksOk ? CheckCircleIcon : AlertCircleIcon}
-                          tone={webhooksOk ? "success" : "caution"}
-                        />
-                        <Text as="span" fontWeight="semibold">
-                          Webhooks
-                        </Text>
-                        <Badge tone={webhooksOk ? "success" : "attention"}>
-                          {webhooksOk ? "Registered" : "Missing"}
-                        </Badge>
-                      </InlineStack>
-                      <Text as="p" tone="subdued" variant="bodySm">
-                        {webhooksOk
-                          ? "orders/paid, orders/create, app/uninstalled"
-                          : "Order webhooks not registered. Re-install tracking."}
-                      </Text>
-                    </BlockStack>
-                  </Box>
+                  <StatusPill
+                    ok={webPixelOk}
+                    label="Web Pixel"
+                    okText="Records every order on the thank-you page."
+                    badText="Not connected yet. Click Refresh tracking."
+                  />
+                  <StatusPill
+                    ok={scriptOk}
+                    label="Script tag"
+                    okText="Captures affiliate clicks on your online store."
+                    badText="Not installed on the storefront yet."
+                  />
+                  <StatusPill
+                    ok={webhooksOk}
+                    label="Order tracking"
+                    okText="Backup tracking via Shopify order webhooks."
+                    badText="Webhooks not registered yet."
+                  />
                 </InlineGrid>
-
                 {data.trackingScriptUrl ? (
                   <TextField
-                    label="Tracking script URL"
+                    label="Tracking script URL (advanced)"
                     value={data.trackingScriptUrl}
                     autoComplete="off"
                     readOnly
                     monospaced
-                    helpText="Injected automatically via ScriptTag. First-click attribution + thank-you detection."
+                    connectedRight={
+                      <Button
+                        onClick={() => copy(data.trackingScriptUrl!, "script")}
+                      >
+                        {copied === "script" ? "Copied" : "Copy"}
+                      </Button>
+                    }
+                    helpText="Installed automatically. Only needed if you customize your theme manually."
                   />
                 ) : null}
               </BlockStack>
             </Card>
           </Layout.Section>
 
+          {/* Sales summary */}
           <Layout.Section>
             <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
               <Card>
-                <BlockStack gap="200">
+                <BlockStack gap="150">
                   <Text as="h2" variant="headingMd">
-                    Sales
+                    Orders tracked
                   </Text>
                   <Text as="p" variant="heading2xl" fontWeight="bold">
                     {data.sales.totalCount}
                   </Text>
                   <Text as="p" tone="subdued">
-                    tracked orders
+                    {data.sales.totalCount === 0
+                      ? "Place a test order to see your first sale here."
+                      : "All orders recorded by Link Flow tracking."}
                   </Text>
                 </BlockStack>
               </Card>
               <Card>
-                <BlockStack gap="200">
+                <BlockStack gap="150">
                   <Text as="h2" variant="headingMd">
-                    Volume
+                    Sales volume
                   </Text>
                   <Text as="p" variant="heading2xl" fontWeight="bold">
                     {data.sales.totalAmount}
                   </Text>
                   <Text as="p" tone="subdued">
-                    total tracked amount
+                    Total amount from tracked orders
                   </Text>
                 </BlockStack>
               </Card>
@@ -379,7 +522,7 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
                     Recent sales
                   </Text>
                   <Link url={data.linkFlowDashboardUrl} target="_blank">
-                    Full dashboard
+                    View in Link Flow
                   </Link>
                 </InlineStack>
                 {salesRows.length > 0 ? (
@@ -404,31 +547,17 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
                   />
                 ) : (
                   <Box paddingBlock="400">
-                    <Text as="p" tone="subdued" alignment="center">
-                      No sales yet. Tracking is ready — attributed orders will
-                      appear here and in Link Flow.
-                    </Text>
+                    <BlockStack gap="200" inlineAlign="center">
+                      <Text as="p" alignment="center" fontWeight="semibold">
+                        No sales yet
+                      </Text>
+                      <Text as="p" tone="subdued" alignment="center">
+                        When a customer checks out, the order will show up here
+                        — even if they weren’t referred by an affiliate.
+                      </Text>
+                    </BlockStack>
                   </Box>
                 )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">
-                  Resources
-                </Text>
-                <Link url={data.linkFlowDashboardUrl} target="_blank">
-                  Link Flow brand dashboard
-                </Link>
-                <Link url="https://www.linkflowaffiliates.com" target="_blank">
-                  linkflowaffiliates.com
-                </Link>
-                <Text as="p" tone="subdued" variant="bodySm">
-                  Scopes: {store.scopes || "—"}
-                </Text>
               </BlockStack>
             </Card>
           </Layout.Section>
