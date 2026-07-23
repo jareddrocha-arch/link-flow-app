@@ -9,7 +9,7 @@ import {
 } from "@/lib/stores";
 import type { Store } from "@prisma/client";
 
-const SHOP_SESSION_COOKIE = "lf_shop_session";
+export const SHOP_SESSION_COOKIE = "lf_shop_session";
 /** 30 days */
 const SHOP_SESSION_MAX_AGE = 60 * 60 * 24 * 30;
 
@@ -18,36 +18,82 @@ function signingSecret(): string {
     process.env.SHOPIFY_API_SECRET?.trim() ||
     process.env.SESSION_SECRET?.trim();
   if (!secret) {
-    throw new Error("Missing SHOPIFY_API_SECRET (or SESSION_SECRET) for shop session cookies");
+    throw new Error(
+      "Missing SHOPIFY_API_SECRET (or SESSION_SECRET) for shop session cookies",
+    );
   }
   return secret;
 }
 
 function sign(value: string): string {
-  return createHmac("sha256", signingSecret()).update(value).digest("base64url");
+  return createHmac("sha256", signingSecret())
+    .update(value)
+    .digest("base64url");
 }
 
+/**
+ * Encode shop session. Must not use bare dots as delimiters for the shop
+ * domain (myshopify.com contains dots).
+ * Format: base64url({shop,t}).signature
+ */
 function encodeSession(shop: string): string {
-  const payload = `${shop}.${Date.now()}`;
+  const payload = Buffer.from(
+    JSON.stringify({ shop, t: Date.now() }),
+    "utf8",
+  ).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }
 
-function decodeSession(raw: string | undefined): string | null {
+/**
+ * Decode and verify shop session cookie. Supports:
+ * - New format: base64url(json).sig
+ * - Legacy broken format: shop.with.dots.timestamp.sig (best-effort)
+ */
+export function decodeSession(raw: string | undefined | null): string | null {
   if (!raw) return null;
-  const parts = raw.split(".");
-  if (parts.length < 3) return null;
-  const sig = parts.pop()!;
-  const payload = parts.join(".");
+
+  const lastDot = raw.lastIndexOf(".");
+  if (lastDot <= 0) return null;
+
+  const payload = raw.slice(0, lastDot);
+  const sig = raw.slice(lastDot + 1);
+  if (!payload || !sig) return null;
+
   const expected = sign(payload);
   try {
     const a = Buffer.from(sig);
     const b = Buffer.from(expected);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      return null;
+    }
   } catch {
     return null;
   }
-  const shop = parts[0];
-  return normalizeShop(shop);
+
+  // New JSON payload
+  try {
+    const json = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as { shop?: string; t?: number };
+    if (json?.shop) {
+      return normalizeShop(json.shop);
+    }
+  } catch {
+    /* try legacy */
+  }
+
+  // Legacy: "lftesting.myshopify.com.<timestamp>"
+  const legacyParts = payload.split(".");
+  if (legacyParts.length >= 4) {
+    // last segment is timestamp
+    const maybeTs = legacyParts[legacyParts.length - 1];
+    if (/^\d+$/.test(maybeTs)) {
+      const shop = legacyParts.slice(0, -1).join(".");
+      return normalizeShop(shop);
+    }
+  }
+
+  return null;
 }
 
 export function setShopSessionCookie(
@@ -77,10 +123,44 @@ export function clearShopSessionCookie(response: NextResponse): void {
 }
 
 /**
+ * True if request is allowed to manage this shop:
+ * - non-production, or
+ * - DEBUG_SECRET key matches, or
+ * - valid signed lf_shop_session cookie for this shop
+ */
+export async function isAuthorizedForShop(
+  shop: string,
+  request?: NextRequest,
+): Promise<boolean> {
+  const normalized = normalizeShop(shop);
+  if (!normalized) return false;
+
+  if (process.env.NODE_ENV !== "production") {
+    return true;
+  }
+
+  const key =
+    request?.nextUrl.searchParams.get("key") ||
+    request?.headers.get("x-debug-secret");
+  if (process.env.DEBUG_SECRET?.trim() && key === process.env.DEBUG_SECRET.trim()) {
+    return true;
+  }
+
+  try {
+    const cookieStore = await cookies();
+    const raw = cookieStore.get(SHOP_SESSION_COOKIE)?.value;
+    const sessionShop = decodeSession(raw);
+    return sessionShop === normalized;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolve shop domain from (in order):
  * 1. ?shop= query param
  * 2. Signed session cookie set after OAuth
- * 3. X-Shopify-Shop-Domain header (webhooks / embedded)
+ * 3. X-Shopify-Shop-Domain header
  */
 export async function resolveShopFromRequest(
   request: NextRequest,
@@ -103,9 +183,6 @@ export async function resolveShopFromRequest(
   return decodeSession(cookieStore.get(SHOP_SESSION_COOKIE)?.value);
 }
 
-/**
- * Load Store row for the current request (null if not installed / unknown).
- */
 export async function getCurrentStore(
   request: NextRequest,
 ): Promise<Store | null> {
@@ -114,9 +191,6 @@ export async function getCurrentStore(
   return getStoreByShop(shop);
 }
 
-/**
- * Offline access token for the shop on this request.
- */
 export async function getCurrentStoreAccessToken(
   request: NextRequest,
 ): Promise<string | null> {
@@ -125,9 +199,6 @@ export async function getCurrentStoreAccessToken(
   return getStoreAccessToken(shop);
 }
 
-/**
- * Throws if the shop is not installed / has no token.
- */
 export async function requireCurrentStore(request: NextRequest): Promise<{
   shop: string;
   store: Store;

@@ -4,16 +4,14 @@ import { getStoreByShop, normalizeShop } from "@/lib/stores";
 import { getTrackingScriptUrl } from "@/lib/tracking-url";
 import type { Sale, Store } from "@prisma/client";
 
-const SHOP_SESSION_COOKIE = "lf_shop_session";
-
-/** Decode shop from signed session cookie (same format as shop-session). */
+/** Decode shop from signed session cookie. */
 async function shopFromSessionCookie(): Promise<string | null> {
   try {
-    const raw = (await cookies()).get(SHOP_SESSION_COOKIE)?.value;
-    if (!raw) return null;
-    const parts = raw.split(".");
-    if (parts.length < 3) return null;
-    return normalizeShop(parts[0]);
+    const { decodeSession, SHOP_SESSION_COOKIE: name } = await import(
+      "@/lib/shop-session"
+    );
+    const raw = (await cookies()).get(name)?.value;
+    return decodeSession(raw);
   } catch {
     return null;
   }

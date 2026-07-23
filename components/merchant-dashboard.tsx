@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Banner,
@@ -75,6 +75,7 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
   );
   const [saving, setSaving] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
   const [banner, setBanner] = useState<{
     tone: "success" | "warning" | "critical" | "info";
     title: string;
@@ -86,6 +87,32 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
   const webhooksOk = data.tracking.webhooks === "ok";
   const webPixelOk = data.tracking.webPixel === "ok";
   const trackingActive = scriptOk || webPixelOk || webhooksOk;
+
+  // Ensure browser has a valid shop session cookie (fixed encoding) after install
+  useEffect(() => {
+    if (!data.shop || data.needsInstall) {
+      setSessionReady(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        await fetch("/api/session/establish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ shop: data.shop }),
+        });
+      } catch {
+        /* non-fatal */
+      } finally {
+        if (!cancelled) setSessionReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data.shop, data.needsInstall]);
 
   const copy = useCallback(async (text: string, which: "brand" | "script") => {
     try {
@@ -102,9 +129,18 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
     setSaving(true);
     setBanner(null);
     try {
+      // Ensure session cookie before settings call
+      await fetch("/api/session/establish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ shop: data.shop }),
+      });
+
       const res = await fetch("/api/store/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           shop: data.shop,
           brandKey: brandKeyInput.trim(),
@@ -143,25 +179,52 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
     setProvisioning(true);
     setBanner(null);
     try {
+      // Establish session first (fixes missing/legacy cookie → 401)
+      const est = await fetch("/api/session/establish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ shop: data.shop }),
+      });
+      if (!est.ok) {
+        const estBody = await est.json().catch(() => ({}));
+        setBanner({
+          tone: "warning",
+          title: "Couldn’t start session",
+          message:
+            estBody.error ||
+            "Please reinstall the app so we can store a Shopify access token.",
+        });
+        return;
+      }
+
       const qs = new URLSearchParams({ shop: data.shop });
       const res = await fetch(`/api/admin/provision?${qs.toString()}`, {
         method: "POST",
+        credentials: "include",
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         setBanner({
           tone: "warning",
           title: "Couldn’t refresh tracking",
-          message: body.error || "Try again or reinstall the app.",
+          message:
+            body.error ||
+            (body.code === "missing_access_token"
+              ? "No access token on file — reinstall the app from Shopify."
+              : "Try again or reinstall the app."),
         });
         return;
       }
+      const errCount = Array.isArray(body.errors) ? body.errors.length : 0;
       setBanner({
-        tone: "success",
-        title: "Tracking refreshed",
-        message: "Script tag, web pixel, and webhooks were updated.",
+        tone: errCount ? "warning" : "success",
+        title: errCount ? "Tracking partially updated" : "Tracking refreshed",
+        message: errCount
+          ? `Some steps failed: ${(body.errors as string[]).slice(0, 2).join(" · ")}`
+          : "Script tag, web pixel, and webhooks were updated.",
       });
-      window.setTimeout(() => window.location.reload(), 800);
+      window.setTimeout(() => window.location.reload(), 1000);
     } catch (e) {
       setBanner({
         tone: "critical",
@@ -339,7 +402,11 @@ export function MerchantDashboard({ data, showOnboarding = false }: Props) {
                     Open Link Flow dashboard
                   </Button>
                   {!trackingActive ? (
-                    <Button onClick={reProvision} loading={provisioning}>
+                    <Button
+                      onClick={reProvision}
+                      loading={provisioning}
+                      disabled={!sessionReady || provisioning}
+                    >
                       Refresh tracking
                     </Button>
                   ) : null}
