@@ -61,9 +61,12 @@ export async function POST(request: NextRequest) {
     referralCode,
     productName,
     pageUrl,
+    currency,
+    source,
   } = parsed.data;
 
   // Primary: record against this app's Supabase Store
+  // Fires for every sale (referralCode optional — web pixel + script + webhooks)
   const local = await recordStoreSale({
     brandKey,
     amount,
@@ -72,7 +75,11 @@ export async function POST(request: NextRequest) {
     productName,
     referralCode,
     pageUrl,
-    source: "script",
+    currency,
+    source:
+      source === "pixel" || source === "webhook" || source === "manual"
+        ? source
+        : "script",
   });
 
   if (!local.ok) {

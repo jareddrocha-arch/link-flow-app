@@ -8,6 +8,8 @@ export type TrackSaleInput = {
   referralCode?: string;
   productName?: string;
   pageUrl?: string;
+  currency?: string;
+  source?: string;
 };
 
 export type TrackSaleValidation =
@@ -97,6 +99,19 @@ export function validateTrackSaleBody(raw: unknown): TrackSaleValidation {
     }
   }
 
+  let currency: string | undefined;
+  if (body.currency != null && body.currency !== "") {
+    currency = String(body.currency).trim().slice(0, 3).toUpperCase();
+  }
+
+  let source: string | undefined;
+  if (body.source != null && body.source !== "") {
+    source = String(body.source).trim().slice(0, 32);
+  }
+
+  // Referral codes from cookies may be plain affiliate codes; only validate fa- format when present
+  // (already handled above). Empty referral is allowed for non-referred sales.
+
   if (Object.keys(details).length > 0) {
     return { ok: false, error: "Validation failed", details };
   }
@@ -111,6 +126,8 @@ export function validateTrackSaleBody(raw: unknown): TrackSaleValidation {
       referralCode,
       productName,
       pageUrl,
+      currency,
+      source,
     },
   };
 }

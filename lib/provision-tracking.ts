@@ -1,9 +1,11 @@
 import type { Store } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { resolveAppUrl } from "@/lib/shopify";
 import {
   createScriptTag,
   createWebhook,
   deleteScriptTag,
+  ensureWebPixel,
   listScriptTags,
   listWebhooks,
 } from "@/lib/shopify-admin";
@@ -16,13 +18,20 @@ import {
 export type ProvisionResult = {
   scriptTagId: string | null;
   scriptSrc: string | null;
+  webPixelId: string | null;
   webhooks: string[];
   errors: string[];
 };
 
+function salesTrackApiUrl(): string {
+  return `${resolveAppUrl()}/api/sales/track`;
+}
+
 /**
- * After OAuth install: inject storefront tracking ScriptTag + register webhooks.
- * Best-effort — failures are collected so install still succeeds.
+ * After OAuth install:
+ * 1. ScriptTag (storefront first-click)
+ * 2. Web Pixel (thank-you / checkout_completed — every order)
+ * 3. Webhooks (orders + uninstall backup)
  */
 export async function provisionStoreTracking(
   store: Store,
@@ -31,11 +40,13 @@ export async function provisionStoreTracking(
   const webhooksRegistered: string[] = [];
   let scriptTagId: string | null = store.scriptTagId;
   let scriptSrc: string | null = null;
+  let webPixelId: string | null = store.webPixelId;
 
   if (!store.accessToken) {
     return {
       scriptTagId: null,
       scriptSrc: null,
+      webPixelId: null,
       webhooks: [],
       errors: ["Missing access token"],
     };
@@ -45,17 +56,17 @@ export async function provisionStoreTracking(
     return {
       scriptTagId: null,
       scriptSrc: null,
+      webPixelId: null,
       webhooks: [],
       errors: ["Missing brandKey"],
     };
   }
 
-  // ── ScriptTag (storefront first-click + order status where supported) ─────
+  // ── ScriptTag (storefront first-click) ────────────────────────────────────
   try {
     scriptSrc = getTrackingScriptUrl({ brandKey: store.brandKey });
     const existing = await listScriptTags(store.shop, store.accessToken);
 
-    // Remove prior Link Flow tags so reinstall doesn't stack duplicates
     for (const tag of existing) {
       if (isLinkFlowScriptSrc(tag.src)) {
         try {
@@ -68,41 +79,44 @@ export async function provisionStoreTracking(
       }
     }
 
-    // Primary: all scopes (online store + legacy order status page when available)
     const created = await createScriptTag({
       shop: store.shop,
       accessToken: store.accessToken,
       src: scriptSrc,
-      displayScope: "all",
+      displayScope: "online_store",
     });
     scriptTagId = String(created.id);
+  } catch (e) {
+    errors.push(`script_tag: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
-    // Extra order_status-only tag with ty=1 for stronger thank-you detection
-    // (ignored on Checkout Extensibility; webhooks cover modern checkout)
-    try {
-      const tySrc = getTrackingScriptUrl({
-        brandKey: store.brandKey,
-        thankYou: true,
-      });
-      await createScriptTag({
-        shop: store.shop,
-        accessToken: store.accessToken,
-        src: tySrc,
-        displayScope: "order_status",
-      });
-    } catch (e) {
-      // order_status may be unavailable on some shops — non-fatal
+  // ── Web Pixel (checkout_completed — every sale) ───────────────────────────
+  try {
+    const pixel = await ensureWebPixel({
+      shop: store.shop,
+      accessToken: store.accessToken,
+      brandKey: store.brandKey,
+      apiUrl: salesTrackApiUrl(),
+      existingId: store.webPixelId,
+    });
+
+    if (pixel.userErrors?.length) {
       errors.push(
-        `order_status script_tag: ${e instanceof Error ? e.message : String(e)}`,
+        `web_pixel: ${pixel.userErrors.map((u) => u.message).join("; ")}`,
       );
+    }
+    if (pixel.id) {
+      webPixelId = pixel.id;
+    } else if (!pixel.userErrors?.length) {
+      errors.push("web_pixel: no id returned (deploy extension + scopes?)");
     }
   } catch (e) {
     errors.push(
-      `script_tag: ${e instanceof Error ? e.message : String(e)}`,
+      `web_pixel: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
 
-  // ── Webhooks (reliable order attribution backup) ─────────────────────────
+  // ── Webhooks (server-side order backup) ───────────────────────────────────
   const webhookAddress = getWebhookCallbackUrl("/api/webhooks/shopify");
   const topics = ["orders/paid", "orders/create", "app/uninstalled"] as const;
 
@@ -140,6 +154,8 @@ export async function provisionStoreTracking(
     data: {
       scriptTagId: scriptTagId ?? undefined,
       trackingInstalledAt: scriptTagId ? now : undefined,
+      webPixelId: webPixelId ?? undefined,
+      webPixelInstalledAt: webPixelId ? now : undefined,
       webhooksInstalledAt:
         webhooksRegistered.length > 0 ? now : undefined,
     },
@@ -148,6 +164,7 @@ export async function provisionStoreTracking(
   return {
     scriptTagId,
     scriptSrc,
+    webPixelId,
     webhooks: webhooksRegistered,
     errors,
   };

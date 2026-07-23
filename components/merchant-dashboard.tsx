@@ -113,6 +113,7 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
   const store = data.store;
   const scriptOk = data.tracking.scriptTag === "ok";
   const webhooksOk = data.tracking.webhooks === "ok";
+  const webPixelOk = data.tracking.webPixel === "ok";
 
   const salesRows = data.sales.recent.map((s) => [
     s.orderId || s.id.slice(0, 8),
@@ -245,7 +246,7 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
                 <Text as="h2" variant="headingMd">
                   Tracking status
                 </Text>
-                <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+                <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
                   <Box
                     padding="300"
                     background="bg-surface-secondary"
@@ -266,12 +267,34 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
                       </InlineStack>
                       <Text as="p" tone="subdued" variant="bodySm">
                         {scriptOk
-                          ? `ID ${store.scriptTagId ?? "—"}${
-                              store.trackingInstalledAt
-                                ? ` · ${new Date(store.trackingInstalledAt).toLocaleString()}`
-                                : ""
-                            }`
-                          : "Not injected yet. Click “Re-install tracking”."}
+                          ? `Storefront first-click · ${store.scriptTagId ?? "—"}`
+                          : "Storefront script not injected. Re-install tracking."}
+                      </Text>
+                    </BlockStack>
+                  </Box>
+
+                  <Box
+                    padding="300"
+                    background="bg-surface-secondary"
+                    borderRadius="200"
+                  >
+                    <BlockStack gap="200">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Icon
+                          source={webPixelOk ? CheckCircleIcon : AlertCircleIcon}
+                          tone={webPixelOk ? "success" : "caution"}
+                        />
+                        <Text as="span" fontWeight="semibold">
+                          Web Pixel
+                        </Text>
+                        <Badge tone={webPixelOk ? "success" : "attention"}>
+                          {webPixelOk ? "Connected" : "Missing"}
+                        </Badge>
+                      </InlineStack>
+                      <Text as="p" tone="subdued" variant="bodySm">
+                        {webPixelOk
+                          ? `Thank-you / checkout_completed · every order`
+                          : "Deploy extension + reinstall (needs write_pixels)."}
                       </Text>
                     </BlockStack>
                   </Box>
@@ -296,12 +319,8 @@ export function MerchantDashboard({ data, debugSecret }: Props) {
                       </InlineStack>
                       <Text as="p" tone="subdued" variant="bodySm">
                         {webhooksOk
-                          ? `orders/paid, orders/create, app/uninstalled${
-                              store.webhooksInstalledAt
-                                ? ` · ${new Date(store.webhooksInstalledAt).toLocaleString()}`
-                                : ""
-                            }`
-                          : "Order webhooks not registered. Click “Re-install tracking”."}
+                          ? "orders/paid, orders/create, app/uninstalled"
+                          : "Order webhooks not registered. Re-install tracking."}
                       </Text>
                     </BlockStack>
                   </Box>

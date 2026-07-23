@@ -42,12 +42,15 @@ export type MerchantDashboardData = {
     scriptTagId: string | null;
     trackingInstalledAt: string | null;
     webhooksInstalledAt: string | null;
+    webPixelId: string | null;
+    webPixelInstalledAt: string | null;
     installedAt: string;
   } | null;
   trackingScriptUrl: string | null;
   tracking: {
     scriptTag: "ok" | "missing" | "unknown";
     webhooks: "ok" | "missing" | "unknown";
+    webPixel: "ok" | "missing" | "unknown";
   };
   sales: {
     totalCount: number;
@@ -94,7 +97,11 @@ export async function loadMerchantDashboard(
       shop: null,
       store: null,
       trackingScriptUrl: null,
-      tracking: { scriptTag: "unknown", webhooks: "unknown" },
+      tracking: {
+        scriptTag: "unknown",
+        webhooks: "unknown",
+        webPixel: "unknown",
+      },
       sales: { totalCount: 0, totalAmount: money(0), recent: [] },
       linkFlowDashboardUrl,
       needsInstall: true,
@@ -113,7 +120,11 @@ export async function loadMerchantDashboard(
       shop,
       store: null,
       trackingScriptUrl: null,
-      tracking: { scriptTag: "missing", webhooks: "missing" },
+      tracking: {
+        scriptTag: "missing",
+        webhooks: "missing",
+        webPixel: "missing",
+      },
       sales: { totalCount: 0, totalAmount: money(0), recent: [] },
       linkFlowDashboardUrl,
       needsInstall: true,
@@ -150,12 +161,15 @@ export async function loadMerchantDashboard(
       scriptTagId: store.scriptTagId,
       trackingInstalledAt: store.trackingInstalledAt?.toISOString() ?? null,
       webhooksInstalledAt: store.webhooksInstalledAt?.toISOString() ?? null,
+      webPixelId: store.webPixelId,
+      webPixelInstalledAt: store.webPixelInstalledAt?.toISOString() ?? null,
       installedAt: store.installedAt.toISOString(),
     },
     trackingScriptUrl,
     tracking: {
       scriptTag: store.scriptTagId || store.trackingInstalledAt ? "ok" : "missing",
       webhooks: store.webhooksInstalledAt ? "ok" : "missing",
+      webPixel: store.webPixelId || store.webPixelInstalledAt ? "ok" : "missing",
     },
     sales: {
       totalCount,

@@ -139,3 +139,137 @@ export async function createWebhook(options: {
   });
   return data.webhook;
 }
+
+// ── GraphQL (Web Pixel activation) ───────────────────────────────────────────
+
+export async function shopifyAdminGraphql<T = unknown>(options: {
+  shop: string;
+  accessToken: string;
+  query: string;
+  variables?: Record<string, unknown>;
+}): Promise<T> {
+  const shop = options.shop.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const url = `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-Shopify-Access-Token": options.accessToken,
+    },
+    body: JSON.stringify({
+      query: options.query,
+      variables: options.variables ?? {},
+    }),
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(
+      `Shopify GraphQL failed (${res.status}): ${text.slice(0, 300)}`,
+    );
+  }
+
+  const json = JSON.parse(text) as {
+    data?: T;
+    errors?: Array<{ message: string }>;
+  };
+  if (json.errors?.length) {
+    throw new Error(
+      `Shopify GraphQL errors: ${json.errors.map((e) => e.message).join("; ")}`,
+    );
+  }
+  return json.data as T;
+}
+
+export type WebPixelResult = {
+  id: string | null;
+  settings: string | null;
+  userErrors: Array<{ field?: string[]; message: string; code?: string }>;
+};
+
+/**
+ * Create or update the app web pixel for this shop with brandKey + apiUrl settings.
+ * Requires write_pixels + read_customer_events scopes and a deployed web_pixel extension.
+ */
+export async function ensureWebPixel(options: {
+  shop: string;
+  accessToken: string;
+  brandKey: string;
+  apiUrl: string;
+  existingId?: string | null;
+}): Promise<WebPixelResult> {
+  const settings = JSON.stringify({
+    brandKey: options.brandKey,
+    apiUrl: options.apiUrl,
+  });
+
+  // Prefer update if we already stored an id
+  if (options.existingId) {
+    try {
+      const data = await shopifyAdminGraphql<{
+        webPixelUpdate: {
+          webPixel: { id: string; settings: string } | null;
+          userErrors: WebPixelResult["userErrors"];
+        };
+      }>({
+        shop: options.shop,
+        accessToken: options.accessToken,
+        query: `
+          mutation webPixelUpdate($id: ID!, $webPixel: WebPixelInput!) {
+            webPixelUpdate(id: $id, webPixel: $webPixel) {
+              webPixel { id settings }
+              userErrors { field message code }
+            }
+          }
+        `,
+        variables: {
+          id: options.existingId,
+          webPixel: { settings },
+        },
+      });
+
+      const payload = data.webPixelUpdate;
+      if (payload.webPixel?.id) {
+        return {
+          id: payload.webPixel.id,
+          settings: payload.webPixel.settings,
+          userErrors: payload.userErrors ?? [],
+        };
+      }
+      // fall through to create if update failed (e.g. pixel deleted)
+    } catch {
+      /* try create */
+    }
+  }
+
+  const data = await shopifyAdminGraphql<{
+    webPixelCreate: {
+      webPixel: { id: string; settings: string } | null;
+      userErrors: WebPixelResult["userErrors"];
+    };
+  }>({
+    shop: options.shop,
+    accessToken: options.accessToken,
+    query: `
+      mutation webPixelCreate($webPixel: WebPixelInput!) {
+        webPixelCreate(webPixel: $webPixel) {
+          webPixel { id settings }
+          userErrors { field message code }
+        }
+      }
+    `,
+    variables: {
+      webPixel: { settings },
+    },
+  });
+
+  const payload = data.webPixelCreate;
+  return {
+    id: payload.webPixel?.id ?? null,
+    settings: payload.webPixel?.settings ?? null,
+    userErrors: payload.userErrors ?? [],
+  };
+}
+

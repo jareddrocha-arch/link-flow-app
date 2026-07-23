@@ -1,0 +1,23 @@
+# Learn more: https://shopify.dev/docs/apps/tools/cli/configuration
+# Deploy extensions: shopify app deploy
+
+name = "link-flow-app"
+client_id = "c44d67f1c37c29750718d359d38d160e"
+application_url = "https://link-flow-app-amber.vercel.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+# write_pixels + read_customer_events required for Web Pixel activation
+scopes = "read_products,read_orders,write_script_tags,write_pixels,read_customer_events"
+
+[auth]
+redirect_urls = [
+  "https://link-flow-app-amber.vercel.app/api/auth/callback",
+  "http://localhost:3000/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-04"

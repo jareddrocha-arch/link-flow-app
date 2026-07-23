@@ -1,0 +1,30 @@
+# Link Flow Affiliates — Web Pixel (thank-you / checkout_completed)
+# Deploy with: shopify app deploy
+# Activate after install via webPixelCreate (see lib/provision-tracking.ts)
+
+type = "web_pixel_extension"
+name = "link-flow-web-pixel"
+# UID is assigned by Shopify CLI on first deploy; leave blank or update after deploy
+# uid = ""
+runtime_context = "strict"
+
+[customer_privacy]
+analytics = true
+marketing = false
+preferences = false
+sale_of_data = "disabled"
+
+[settings]
+type = "object"
+
+[settings.fields.brandKey]
+name = "Brand key"
+description = "Link Flow brandKey (fb_…) for this store"
+type = "single_line_text_field"
+validations = [{ name = "min", value = "10" }]
+
+[settings.fields.apiUrl]
+name = "Sales track API URL"
+description = "Full URL to POST order data (e.g. https://link-flow-app-amber.vercel.app/api/sales/track)"
+type = "single_line_text_field"
+validations = [{ name = "min", value = "8" }]

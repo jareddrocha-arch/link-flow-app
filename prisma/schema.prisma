@@ -72,6 +72,10 @@ model Store {
   trackingInstalledAt DateTime?
   /// When order/app webhooks were last registered
   webhooksInstalledAt DateTime?
+  /// Shopify Web Pixel GID (app pixel activation)
+  webPixelId   String?
+  /// When web pixel settings were last written
+  webPixelInstalledAt DateTime?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
