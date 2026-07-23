@@ -88,6 +88,20 @@ model Store {
   @@index([brandKey])
 }
 
+/// Audit log for app lifecycle events (install/uninstall, etc.)
+model AppEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  storeId   String?
+  /// e.g. APP_UNINSTALLED, TRACKING_PROVISIONED
+  type      String
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([type, createdAt])
+}
+
 /// Affiliate / creator promoting a store’s products.
 model Affiliate {
   id               String          @id @default(cuid())

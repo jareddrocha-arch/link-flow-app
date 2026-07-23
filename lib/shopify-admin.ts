@@ -273,3 +273,39 @@ export async function ensureWebPixel(options: {
   };
 }
 
+/**
+ * Delete the app web pixel for a shop.
+ * Often fails after app/uninstalled (token revoked); Shopify also removes app pixels on uninstall.
+ */
+export async function deleteWebPixel(options: {
+  shop: string;
+  accessToken: string;
+  id: string;
+}): Promise<{ deletedId: string | null; errors: string[] }> {
+  const data = await shopifyAdminGraphql<{
+    webPixelDelete: {
+      deletedWebPixelId: string | null;
+      userErrors: Array<{ message: string }>;
+    };
+  }>({
+    shop: options.shop,
+    accessToken: options.accessToken,
+    query: `
+      mutation webPixelDelete($id: ID!) {
+        webPixelDelete(id: $id) {
+          deletedWebPixelId
+          userErrors { field message code }
+        }
+      }
+    `,
+    variables: { id: options.id },
+  });
+
+  const payload = data.webPixelDelete;
+  return {
+    deletedId: payload.deletedWebPixelId ?? null,
+    errors: (payload.userErrors ?? []).map((e) => e.message),
+  };
+}
+
+

@@ -9,6 +9,8 @@ export const dynamic = "force-dynamic";
 /**
  * Shopify webhook receiver (orders + app/uninstalled).
  * Address registered at install: {HOST}/api/webhooks/shopify
+ *
+ * app/uninstalled → full cleanup (ScriptTags, Web Pixel, sessions, brandKey, audit log)
  */
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -18,9 +20,10 @@ export async function POST(request: NextRequest) {
     request.headers.get("x-shopify-shop-domain") ||
     request.headers.get("X-Shopify-Shop-Domain") ||
     "";
+  const webhookId = request.headers.get("x-shopify-webhook-id") || null;
 
   if (!verifyShopifyWebhookHmac(rawBody, hmac)) {
-    console.warn("[webhook] invalid hmac", { topic, shopDomain });
+    console.warn("[webhook] invalid hmac", { topic, shopDomain, webhookId });
     return new NextResponse("Invalid HMAC", { status: 401 });
   }
 
@@ -32,16 +35,30 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (topic.toLowerCase() === "app/uninstalled") {
+      console.info("[webhook] app/uninstalled received", {
+        shopDomain,
+        webhookId,
+      });
+    }
+
     const result = await handleShopifyWebhook({
       topic,
       shopDomain,
       payload,
     });
-    console.info("[webhook]", { topic, shopDomain, ...result });
-    // Always 200 quickly so Shopify doesn't retry endlessly on business logic
+
+    console.info("[webhook]", {
+      topic,
+      shopDomain,
+      webhookId,
+      ...result,
+    });
+
+    // Always 200 so Shopify does not retry forever on business-logic edges
     return NextResponse.json({ received: true, ...result });
   } catch (error) {
-    console.error("[webhook] handler error", error);
+    console.error("[webhook] handler error", { topic, shopDomain, error });
     return NextResponse.json(
       { received: false, error: "handler_failed" },
       { status: 500 },

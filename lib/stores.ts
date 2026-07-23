@@ -56,6 +56,10 @@ export async function upsertStoreFromOAuth(
   });
 }
 
+/**
+ * @deprecated Prefer cleanupShopUninstall() for full ScriptTag/pixel/session cleanup.
+ * Kept for simple status flips if needed.
+ */
 export async function markStoreUninstalled(shop: string): Promise<Store | null> {
   const normalized = normalizeShop(shop);
   if (!normalized) return null;
@@ -66,8 +70,14 @@ export async function markStoreUninstalled(shop: string): Promise<Store | null> 
       data: {
         status: "UNINSTALLED",
         uninstalledAt: new Date(),
-        // Optional: clear token on uninstall for security
-        // accessToken: "",
+        accessToken: "",
+        scopes: "",
+        scriptTagId: null,
+        trackingInstalledAt: null,
+        webhooksInstalledAt: null,
+        webPixelId: null,
+        webPixelInstalledAt: null,
+        brandKey: null,
       },
     });
   } catch {

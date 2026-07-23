@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { markStoreUninstalled } from "@/lib/stores";
 import { recordStoreSale } from "@/lib/record-sale";
 import { normalizeShop } from "@/lib/stores";
+import { cleanupShopUninstall } from "@/lib/uninstall";
 
 export function verifyShopifyWebhookHmac(
   rawBody: string,
@@ -75,8 +75,20 @@ export async function handleShopifyWebhook(options: {
   const topic = options.topic.toLowerCase();
 
   if (topic === "app/uninstalled") {
-    await markStoreUninstalled(shop);
-    return { ok: true, detail: "store marked uninstalled" };
+    const result = await cleanupShopUninstall(shop, {
+      payload: options.payload,
+    });
+    return {
+      ok: true,
+      detail: [
+        "uninstall_cleanup",
+        `scriptTags=${result.scriptTagsDeleted.length}`,
+        `webPixel=${result.webPixelDeleted}`,
+        `db=${result.dbCleaned}`,
+        `api=${result.shopifyApiReachable}`,
+        result.errors.length ? `errors=${result.errors.length}` : "ok",
+      ].join(" "),
+    };
   }
 
   if (topic === "orders/paid" || topic === "orders/create") {
