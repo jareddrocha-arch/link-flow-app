@@ -49,8 +49,25 @@ Add **Production** env vars:
 
 Then **Redeploy**.
 
+## Where are the tables in Supabase?
+
+Prisma creates **capitalized** table names in schema **`public`**:
+
+`Store`, `Affiliate`, `Click`, `Sale`, `Payout`, `PayoutItem`
+
+In Supabase: **Table Editor** → schema dropdown **public** → open **Store** (not “stores”).
+
+## Do I run `prisma db push` after every Vercel redeploy?
+
+**No.**  
+- `db push` updates the **database schema** (run locally when models change).  
+- Vercel redeploy only runs `prisma generate` + `next build` — it does **not** create tables.
+
 ## Test after install
 
 1. Install: `https://link-flow-app-amber.vercel.app/auth/login`
-2. Supabase → **Table Editor → Store**
-3. Local: `http://localhost:3000/api/debug/stores`
+2. Open **no-auth** check: `https://link-flow-app-amber.vercel.app/api/health`
+3. Supabase → **Table Editor → public → Store**
+4. Optional: set `DEBUG_SECRET` on Vercel, then  
+   `/api/debug/stores?key=YOUR_DEBUG_SECRET`  
+   (without the key, production returns 401 — previously looked like a 404)
