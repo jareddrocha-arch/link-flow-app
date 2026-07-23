@@ -2,16 +2,39 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Dev/debug: list installed stores (tokens redacted).
- * Disable in production or protect with a secret.
+ * List installed stores (tokens redacted).
  *
- * GET /api/debug/stores?key=DEBUG_SECRET
+ * Local dev: open /api/debug/stores
+ * Production: set DEBUG_SECRET on Vercel, then:
+ *   /api/debug/stores?key=YOUR_DEBUG_SECRET
+ *
+ * Prefer /api/health for a simple no-auth check.
  */
 export async function GET(request: NextRequest) {
   if (process.env.NODE_ENV === "production") {
-    const key = request.nextUrl.searchParams.get("key");
-    if (!process.env.DEBUG_SECRET || key !== process.env.DEBUG_SECRET) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const expected = process.env.DEBUG_SECRET?.trim();
+    const key = request.nextUrl.searchParams.get("key")?.trim();
+
+    if (!expected) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "DEBUG_SECRET is not set on this deployment",
+          hint: "Add DEBUG_SECRET in Vercel env vars, redeploy, then call /api/debug/stores?key=YOUR_SECRET. Or use GET /api/health (no key).",
+        },
+        { status: 401 },
+      );
+    }
+
+    if (key !== expected) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Invalid or missing key",
+          hint: "Use /api/debug/stores?key=YOUR_DEBUG_SECRET (must match Vercel DEBUG_SECRET).",
+        },
+        { status: 401 },
+      );
     }
   }
 
@@ -30,7 +53,6 @@ export async function GET(request: NextRequest) {
         tokenUpdatedAt: true,
         uninstalledAt: true,
         createdAt: true,
-        // accessToken intentionally omitted
         _count: {
           select: { affiliates: true, sales: true, clicks: true },
         },

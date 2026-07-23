@@ -1,60 +1,56 @@
-# Supabase + Prisma setup (Link Flow Affiliates)
+# Supabase + Prisma (Link Flow Affiliates / link-flow-app)
 
-## 1. Create a Supabase project
+**Project:** dedicated Supabase project `link-flow-app`  
+**Ref:** `jxnfpxzujzmaydqcxnqq`  
+**Region:** `us-west-1`
 
-1. Go to [supabase.com](https://supabase.com) → New project  
-2. Note the **database password**  
-3. **Settings → Database → Connection string**
+## Connection strings
 
-Copy:
+| Env var | Use | Host |
+|---------|-----|------|
+| `DATABASE_URL` | App runtime + Vercel | Transaction pooler `:6543` + `?pgbouncer=true` |
+| `DIRECT_URL` | `prisma db push` / migrations | Session pooler `:5432` (same host) |
 
-| Use | Connection | Port |
-|-----|------------|------|
-| `DATABASE_URL` (app runtime) | Transaction pooler | **6543** + `?pgbouncer=true` |
-| `DIRECT_URL` (migrations) | Direct / Session | **5432** |
-
-## 2. Local env (`.env.local` and `.env` for Prisma CLI)
-
-Prisma CLI loads `.env` by default (`prisma.config.ts` uses `dotenv/config`).  
-Next.js loads `.env.local`.
-
-Put the same `DATABASE_URL` / `DIRECT_URL` in both, or symlink values.
+Templates (replace `YOUR_DB_PASSWORD`):
 
 ```bash
-# .env  (used by prisma CLI)
-DATABASE_URL="postgresql://...pooler...:6543/postgres?pgbouncer=true"
-DIRECT_URL="postgresql://...:5432/postgres"
+DATABASE_URL="postgresql://postgres.jxnfpxzujzmaydqcxnqq:YOUR_DB_PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
+
+DIRECT_URL="postgresql://postgres.jxnfpxzujzmaydqcxnqq:YOUR_DB_PASSWORD@aws-0-us-west-1.pooler.supabase.com:5432/postgres"
 ```
 
-## 3. Commands
+Optional direct host (sometimes blocked on local networks / IPv6):
+
+```bash
+# postgresql://postgres:YOUR_DB_PASSWORD@db.jxnfpxzujzmaydqcxnqq.supabase.co:5432/postgres
+```
+
+Real secrets live only in **gitignored** `.env` and `.env.local`.
+
+## Local setup
 
 ```bash
 npm install
 npx prisma generate
 npx prisma db push
-# optional UI:
-npx prisma studio
+npx prisma studio   # optional
+npm run dev
 ```
 
-## 4. Vercel env vars
+## Vercel
 
-Add for **Production** (and Preview if needed):
+Add **Production** env vars:
 
-- `DATABASE_URL` — pooler 6543  
-- `DIRECT_URL` — optional on Vercel (only needed if you run migrate there)  
-- existing Shopify vars (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `HOST`, `SCOPES`, …)
+| Name | Value |
+|------|--------|
+| `DATABASE_URL` | Transaction pooler URL with password (`:6543`, `pgbouncer=true`) |
+| `DIRECT_URL` | Session pooler URL with password (`:5432`) |
+| Shopify vars | `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `HOST`, `SCOPES`, … |
 
-Redeploy after saving.
+Then **Redeploy**.
 
-`npm run build` runs `prisma generate && next build`.
+## Test after install
 
-## 5. Test install → Store row
-
-1. Install app from production login URL  
-2. Open Supabase **Table Editor → Store**  
-   - or `npx prisma studio` → `Store`  
-3. Or hit (local): `http://localhost:3000/api/debug/stores`  
-4. Production (if `DEBUG_SECRET` set):  
-   `https://link-flow-app-amber.vercel.app/api/debug/stores?key=YOUR_DEBUG_SECRET`
-
-You should see `shop`, `brandKey`, `status: ACTIVE`, **no raw token** in debug JSON.
+1. Install: `https://link-flow-app-amber.vercel.app/auth/login`
+2. Supabase → **Table Editor → Store**
+3. Local: `http://localhost:3000/api/debug/stores`
