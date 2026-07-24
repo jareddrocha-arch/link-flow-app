@@ -9,6 +9,7 @@ function LoginForm() {
   const error = searchParams.get("error");
   const reason = searchParams.get("reason");
   const detail = searchParams.get("detail");
+  const brandKey = searchParams.get("brandKey")?.trim() || "";
   const [shop, setShop] = useState("");
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -22,7 +23,10 @@ function LoginForm() {
       normalized = `${normalized}.myshopify.com`;
     }
 
-    window.location.href = `/api/auth?shop=${encodeURIComponent(normalized)}`;
+    const url = new URL("/api/auth", window.location.origin);
+    url.searchParams.set("shop", normalized);
+    if (brandKey) url.searchParams.set("brandKey", brandKey);
+    window.location.href = url.toString();
   };
 
   const errorMessage =

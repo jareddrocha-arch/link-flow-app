@@ -1,11 +1,13 @@
-import { randomBytes, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { Session } from "@shopify/shopify-api";
+import { isValidBrandKey } from "@/lib/brand-key";
 import { getShopify, getOAuthRedirectUri, OAUTH_CALLBACK_PATH } from "@/lib/shopify";
 
 const STATE_COOKIE = "lf_shopify_oauth_state";
 const SHOP_COOKIE = "lf_shopify_oauth_shop";
+const BRAND_COOKIE = "lf_shopify_oauth_brand";
 /** 10 minutes — Shopify library default is only 60s and often expires mid-install. */
 const OAUTH_COOKIE_MAX_AGE = 60 * 10;
 
@@ -49,12 +51,61 @@ function cookieOptions() {
   };
 }
 
+type OAuthStatePayload = {
+  n: string;
+  bk?: string;
+  exp: number;
+};
+
+/**
+ * Signed OAuth state: CSRF nonce + optional brandKey (HMAC with API secret).
+ * Format: base64url(json).base64url(hmac)
+ */
+export function encodeOAuthState(brandKey?: string | null): string {
+  const { apiSecret } = getCredentials();
+  const payload: OAuthStatePayload = {
+    n: randomBytes(16).toString("hex"),
+    exp: Date.now() + OAUTH_COOKIE_MAX_AGE * 1000,
+  };
+  const key = brandKey?.trim();
+  if (key && isValidBrandKey(key)) {
+    payload.bk = key;
+  }
+  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const sig = createHmac("sha256", apiSecret).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+export function decodeOAuthState(state: string): OAuthStatePayload | null {
+  try {
+    const { apiSecret } = getCredentials();
+    const [body, sig] = state.split(".");
+    if (!body || !sig) return null;
+    const expected = createHmac("sha256", apiSecret).update(body).digest("base64url");
+    if (!safeEqual(sig, expected)) return null;
+    const payload = JSON.parse(
+      Buffer.from(body, "base64url").toString("utf8"),
+    ) as OAuthStatePayload;
+    if (!payload?.n || typeof payload.exp !== "number") return null;
+    if (payload.exp < Date.now()) return null;
+    if (payload.bk != null && !isValidBrandKey(payload.bk)) {
+      delete payload.bk;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Start OAuth: set state cookies on the redirect response, then send merchant to Shopify.
+ * Optional brandKey is embedded in signed `state` (+ cookie backup) so install from
+ * Link Flow can auto-link the store after OAuth.
  */
 export function beginOAuthRedirect(options: {
   shop: string;
   requestUrl: string;
+  brandKey?: string | null;
 }): NextResponse {
   const shopify = getShopify(options.requestUrl);
   const shop = shopify.utils.sanitizeShop(options.shop, true);
@@ -63,11 +114,20 @@ export function beginOAuthRedirect(options: {
   }
 
   const { apiKey } = getCredentials();
-  const state = randomBytes(16).toString("hex");
+  const brandKey =
+    options.brandKey && isValidBrandKey(options.brandKey.trim())
+      ? options.brandKey.trim()
+      : null;
+  const state = encodeOAuthState(brandKey);
   const redirectUri = getOAuthRedirectUri(options.requestUrl);
   const scope = getScopes();
 
-  console.info("[oauth/begin] requesting scopes", { shop, scope, redirectUri });
+  console.info("[oauth/begin] requesting scopes", {
+    shop,
+    scope,
+    redirectUri,
+    hasBrandKey: Boolean(brandKey),
+  });
 
   const authorize = new URL(`https://${shop}/admin/oauth/authorize`);
   authorize.searchParams.set("client_id", apiKey);
@@ -78,6 +138,11 @@ export function beginOAuthRedirect(options: {
   const response = NextResponse.redirect(authorize.toString());
   response.cookies.set(STATE_COOKIE, state, cookieOptions());
   response.cookies.set(SHOP_COOKIE, shop, cookieOptions());
+  if (brandKey) {
+    response.cookies.set(BRAND_COOKIE, brandKey, cookieOptions());
+  } else {
+    response.cookies.set(BRAND_COOKIE, "", { path: "/", maxAge: 0 });
+  }
   return response;
 }
 
@@ -95,7 +160,13 @@ export type OAuthTokenMeta = {
 };
 
 export type OAuthCallbackResult =
-  | { ok: true; session: Session; tokenMeta: OAuthTokenMeta }
+  | {
+      ok: true;
+      session: Session;
+      tokenMeta: OAuthTokenMeta;
+      /** Brand key from signed OAuth state / cookie (Link Flow install). */
+      brandKey: string | null;
+    }
   | { ok: false; code: string; message: string };
 
 /**
@@ -175,8 +246,21 @@ export async function completeOAuth(options: {
   const cookieStore = await cookies();
   const savedState = cookieStore.get(STATE_COOKIE)?.value;
   const savedShop = cookieStore.get(SHOP_COOKIE)?.value;
+  const savedBrandKey = cookieStore.get(BRAND_COOKIE)?.value?.trim() || null;
 
-  if (!savedState || !safeEqual(savedState, state)) {
+  // Prefer verifying signed state payload (works even if cookie is delayed)
+  const decoded = decodeOAuthState(state);
+  if (!decoded) {
+    // Fallback: plain hex state from older installs still in flight
+    if (!savedState || !safeEqual(savedState, state)) {
+      return {
+        ok: false,
+        code: "state_mismatch",
+        message:
+          "OAuth state invalid or expired. Try installing again (complete install within 10 minutes).",
+      };
+    }
+  } else if (savedState && !safeEqual(savedState, state)) {
     return {
       ok: false,
       code: "state_mismatch",
@@ -192,6 +276,12 @@ export async function completeOAuth(options: {
       message: "Shop in callback does not match the shop that started install",
     };
   }
+
+  const brandKeyFromState =
+    decoded?.bk && isValidBrandKey(decoded.bk) ? decoded.bk : null;
+  const brandKeyFromCookie =
+    savedBrandKey && isValidBrandKey(savedBrandKey) ? savedBrandKey : null;
+  const brandKey = brandKeyFromState || brandKeyFromCookie;
 
   // Request **expiring** offline tokens (required by Shopify Admin API 2025+)
   let tokenJson: {
@@ -245,6 +335,7 @@ export async function completeOAuth(options: {
       refreshToken: tokenJson.refresh_token ?? null,
       refreshTokenExpiresIn: tokenJson.refresh_token_expires_in ?? null,
     },
+    brandKey,
   };
 }
 
@@ -252,4 +343,5 @@ export async function completeOAuth(options: {
 export function clearOAuthCookies(response: NextResponse): void {
   response.cookies.set(STATE_COOKIE, "", { path: "/", maxAge: 0 });
   response.cookies.set(SHOP_COOKIE, "", { path: "/", maxAge: 0 });
+  response.cookies.set(BRAND_COOKIE, "", { path: "/", maxAge: 0 });
 }

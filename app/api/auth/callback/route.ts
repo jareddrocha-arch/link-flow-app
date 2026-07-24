@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(loginUrl);
     }
 
-    const { session, tokenMeta } = result;
+    const { session, tokenMeta, brandKey } = result;
 
     const store = await upsertStoreFromOAuth({
       shop: session.shop,
@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
       expiresIn: tokenMeta.expiresIn,
       refreshToken: tokenMeta.refreshToken,
       refreshTokenExpiresIn: tokenMeta.refreshTokenExpiresIn,
+      brandKey,
     });
 
     // Automatic tracking injection (ScriptTag + order webhooks)

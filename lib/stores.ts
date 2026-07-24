@@ -11,6 +11,11 @@ export type UpsertStoreInput = {
   expiresIn?: number | null;
   refreshToken?: string | null;
   refreshTokenExpiresIn?: number | null;
+  /**
+   * When install is started from Link Flow with brandKey in OAuth state,
+   * prefer this key so the store is linked automatically.
+   */
+  brandKey?: string | null;
 };
 
 /**
@@ -36,6 +41,29 @@ export async function upsertStoreFromOAuth(
       ? new Date(now.getTime() + input.refreshTokenExpiresIn * 1000)
       : null;
 
+  const preferredKey =
+    input.brandKey && isValidBrandKey(input.brandKey.trim())
+      ? input.brandKey.trim()
+      : null;
+
+  let resolvedPreferred: string | null = preferredKey;
+  if (preferredKey) {
+    const taken = await prisma.store.findFirst({
+      where: {
+        brandKey: preferredKey,
+        NOT: { shop },
+      },
+      select: { shop: true },
+    });
+    if (taken) {
+      console.warn(
+        "[oauth] brandKey already linked to another shop; generating new key",
+        { preferredKey, otherShop: taken.shop, shop },
+      );
+      resolvedPreferred = null;
+    }
+  }
+
   const existing = await prisma.store.findUnique({ where: { shop } });
 
   if (existing) {
@@ -52,7 +80,9 @@ export async function upsertStoreFromOAuth(
         refreshToken: input.refreshToken ?? existing.refreshToken,
         refreshTokenExpiresAt:
           refreshTokenExpiresAt ?? existing.refreshTokenExpiresAt,
-        brandKey: existing.brandKey ?? generateBrandKey(),
+        // Install-from-Link-Flow wins; else keep existing; else generate
+        brandKey:
+          resolvedPreferred ?? existing.brandKey ?? generateBrandKey(),
       },
     });
   }
@@ -69,7 +99,7 @@ export async function upsertStoreFromOAuth(
       accessTokenExpiresAt,
       refreshToken: input.refreshToken ?? null,
       refreshTokenExpiresAt,
-      brandKey: generateBrandKey(),
+      brandKey: resolvedPreferred ?? generateBrandKey(),
     },
   });
 }

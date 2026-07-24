@@ -5,14 +5,21 @@ import { getOAuthRedirectUri, sanitizeShopDomain } from "@/lib/shopify";
 /**
  * Begin Shopify OAuth.
  * GET /api/auth?shop=example.myshopify.com
+ * Optional: &brandKey=fb_… (from Link Flow brand setup — signed into OAuth state)
  */
 export async function GET(request: NextRequest) {
   const shopParam = request.nextUrl.searchParams.get("shop");
+  const brandKeyParam =
+    request.nextUrl.searchParams.get("brandKey") ||
+    request.nextUrl.searchParams.get("brand_key");
   const shop = sanitizeShopDomain(shopParam, request.url);
 
   if (!shop) {
     const loginUrl = new URL("/auth/login", request.url);
     loginUrl.searchParams.set("error", "missing_shop");
+    if (brandKeyParam) {
+      loginUrl.searchParams.set("brandKey", brandKeyParam);
+    }
     return NextResponse.redirect(loginUrl);
   }
 
@@ -22,11 +29,13 @@ export async function GET(request: NextRequest) {
       shop,
       redirectUri,
       hostEnv: process.env.HOST ?? null,
+      hasBrandKey: Boolean(brandKeyParam?.trim()),
     });
 
     return beginOAuthRedirect({
       shop,
       requestUrl: request.url,
+      brandKey: brandKeyParam,
     });
   } catch (error) {
     console.error("OAuth begin failed:", error);
