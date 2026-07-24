@@ -1,6 +1,5 @@
 import type { Store, StoreStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { randomBytes } from "crypto";
 import { isValidBrandKey } from "@/lib/brand-key";
 
 export type UpsertStoreInput = {
@@ -67,6 +66,21 @@ export async function upsertStoreFromOAuth(
   const existing = await prisma.store.findUnique({ where: { shop } });
 
   if (existing) {
+    // Install-from-Link-Flow (signed OAuth brandKey) wins over empty existing.
+    // Never auto-generate: locked keys stay put; missing keys stay null until first set.
+    let nextBrandKey = existing.brandKey;
+    if (resolvedPreferred) {
+      if (!existing.brandKey || existing.brandKey === resolvedPreferred) {
+        nextBrandKey = resolvedPreferred;
+      } else if (existing.brandKey !== resolvedPreferred) {
+        // Key already locked to a different value — keep existing (support to change)
+        console.warn(
+          "[oauth] store already has brandKey; ignoring install brandKey",
+          { shop, existing: existing.brandKey, preferred: resolvedPreferred },
+        );
+      }
+    }
+
     return prisma.store.update({
       where: { shop },
       data: {
@@ -80,9 +94,7 @@ export async function upsertStoreFromOAuth(
         refreshToken: input.refreshToken ?? existing.refreshToken,
         refreshTokenExpiresAt:
           refreshTokenExpiresAt ?? existing.refreshTokenExpiresAt,
-        // Install-from-Link-Flow wins; else keep existing; else generate
-        brandKey:
-          resolvedPreferred ?? existing.brandKey ?? generateBrandKey(),
+        brandKey: nextBrandKey,
       },
     });
   }
@@ -99,13 +111,16 @@ export async function upsertStoreFromOAuth(
       accessTokenExpiresAt,
       refreshToken: input.refreshToken ?? null,
       refreshTokenExpiresAt,
-      brandKey: resolvedPreferred ?? generateBrandKey(),
+      // Only set from Link Flow install; otherwise merchant sets once in dashboard
+      brandKey: resolvedPreferred,
     },
   });
 }
 
 /**
- * Update brandKey for an active store (merchant confirm / link to Link Flow account).
+ * Set brandKey for an active store.
+ * Allowed only when the store has no brandKey yet (first-time link).
+ * Once set, the key is locked — changes require support.
  */
 export async function updateStoreBrandKey(
   shop: string,
@@ -126,6 +141,15 @@ export async function updateStoreBrandKey(
   const store = await prisma.store.findUnique({ where: { shop: normalized } });
   if (!store || store.status !== "ACTIVE") {
     throw new Error("Store not found or not active");
+  }
+
+  if (store.brandKey) {
+    if (store.brandKey === key) {
+      return store;
+    }
+    throw new Error(
+      "Brand key is locked and cannot be changed from the app. Contact Link Flow support if you need it updated.",
+    );
   }
 
   const conflict = await prisma.store.findFirst({
@@ -218,10 +242,6 @@ export function normalizeShop(shop: string): string | null {
     return cleaned.includes(".") ? cleaned : null;
   }
   return cleaned;
-}
-
-function generateBrandKey(): string {
-  return `fb_${randomBytes(16).toString("base64url").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24)}`;
 }
 
 export type { Store, StoreStatus };

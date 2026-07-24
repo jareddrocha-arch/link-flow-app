@@ -12,6 +12,7 @@ import {
 
 /**
  * Update store settings (brandKey) and re-provision tracking.
+ * brandKey can only be set once (first time). After that it is locked.
  * POST { shop, brandKey, reprovision?: true, actionToken?: string }
  */
 export async function POST(request: NextRequest) {
@@ -65,11 +66,23 @@ export async function POST(request: NextRequest) {
 
   try {
     let updated = store;
-    if (
-      body.brandKey != null &&
-      body.brandKey.trim() !== (store.brandKey ?? "")
-    ) {
-      updated = await updateStoreBrandKey(shop, body.brandKey);
+
+    if (body.brandKey != null && body.brandKey.trim() !== "") {
+      const next = body.brandKey.trim();
+      if (store.brandKey && store.brandKey !== next) {
+        return NextResponse.json(
+          {
+            error:
+              "Brand key is locked and cannot be changed from the app. Contact Link Flow support if you need it updated.",
+            code: "brand_key_locked",
+            brandKey: store.brandKey,
+          },
+          { status: 403 },
+        );
+      }
+      if (!store.brandKey) {
+        updated = await updateStoreBrandKey(shop, next);
+      }
     }
 
     let provision = null;
@@ -81,14 +94,20 @@ export async function POST(request: NextRequest) {
       ok: true,
       shop: updated.shop,
       brandKey: updated.brandKey,
+      brandKeyLocked: Boolean(updated.brandKey),
       provision,
     });
     setShopSessionCookie(response, updated.shop);
     return response;
   } catch (e) {
+    const message = e instanceof Error ? e.message : "Update failed";
+    const locked = /locked/i.test(message);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Update failed" },
-      { status: 400 },
+      {
+        error: message,
+        code: locked ? "brand_key_locked" : "update_failed",
+      },
+      { status: locked ? 403 : 400 },
     );
   }
 }

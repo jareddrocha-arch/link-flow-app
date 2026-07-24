@@ -88,6 +88,7 @@ export function MerchantDashboard({
   } | null>(null);
 
   const store = data.store;
+  const brandKeyLocked = Boolean(store?.brandKey?.trim());
   const scriptOk = data.tracking.scriptTag === "ok";
   const webhooksOk = data.tracking.webhooks === "ok";
   const webPixelOk = data.tracking.webPixel === "ok";
@@ -227,9 +228,12 @@ export function MerchantDashboard({
     const steps: Array<{ done: boolean; title: string; detail: string }> = [
       {
         done: Boolean(store?.brandKey),
-        title: "Confirm your brand key",
-        detail:
-          "This links Shopify sales to your Link Flow Affiliates account.",
+        title: store?.brandKey
+          ? "Brand key linked"
+          : "Set your brand key",
+        detail: store?.brandKey
+          ? "This store is linked to your Link Flow brand (key is locked)."
+          : "Enter the brand key from your Link Flow Setup page, or install the app from Setup so it is applied automatically.",
       },
       {
         done: trackingActive,
@@ -295,6 +299,7 @@ export function MerchantDashboard({
   ]);
 
   const brandDirty =
+    !brandKeyLocked &&
     brandKeyInput.trim() !== "" &&
     brandKeyInput.trim() !== (store.brandKey ?? "");
 
@@ -462,47 +467,84 @@ export function MerchantDashboard({
 
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">
-                    Brand key
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    This is how Link Flow matches sales to your affiliate
-                    program. Use the key from your Link Flow brand account, or
-                    keep the one we generated.
-                  </Text>
-                  <FormLayout>
-                    <TextField
-                      label="Link Flow brand key"
-                      value={brandKeyInput}
-                      onChange={setBrandKeyInput}
-                      autoComplete="off"
-                      monospaced
-                      helpText="Usually starts with fb_"
-                      placeholder="fb_your_key_here"
-                    />
-                  </FormLayout>
-                  <InlineStack gap="200">
-                    <Button
-                      variant="primary"
-                      onClick={saveBrandKey}
-                      loading={saving}
-                      disabled={
-                        saving ||
-                        !brandKeyInput.trim() ||
-                        (!brandDirty && Boolean(store.brandKey))
-                      }
-                    >
-                      {store.brandKey ? "Save brand key" : "Save & activate"}
-                    </Button>
-                    {store.brandKey ? (
-                      <Button
-                        icon={ClipboardIcon}
-                        onClick={() => copy(store.brandKey!, "brand")}
-                      >
-                        {copied === "brand" ? "Copied" : "Copy"}
-                      </Button>
-                    ) : null}
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      Brand key
+                    </Text>
+                    {brandKeyLocked ? (
+                      <Badge tone="info">Locked</Badge>
+                    ) : (
+                      <Badge tone="attention">Not set</Badge>
+                    )}
                   </InlineStack>
+                  {brandKeyLocked ? (
+                    <>
+                      <Text as="p" tone="subdued">
+                        This key links Shopify sales to your Link Flow
+                        Affiliates brand. It was set when you installed the app
+                        (or on first save) and cannot be changed here.
+                      </Text>
+                      <FormLayout>
+                        <TextField
+                          label="Link Flow brand key"
+                          value={store.brandKey ?? ""}
+                          autoComplete="off"
+                          monospaced
+                          readOnly
+                          helpText="Contact Link Flow support if you need this key changed."
+                        />
+                      </FormLayout>
+                      <Banner tone="info" title="Brand key is locked">
+                        <p>
+                          For security, the brand key cannot be edited in the
+                          app once it is set. Email{" "}
+                          <Link url="mailto:support@linkflowaffiliates.com">
+                            support@linkflowaffiliates.com
+                          </Link>{" "}
+                          if you need it updated or moved to another store.
+                        </p>
+                      </Banner>
+                      <InlineStack gap="200">
+                        <Button
+                          icon={ClipboardIcon}
+                          onClick={() => copy(store.brandKey!, "brand")}
+                        >
+                          {copied === "brand" ? "Copied" : "Copy key"}
+                        </Button>
+                      </InlineStack>
+                    </>
+                  ) : (
+                    <>
+                      <Text as="p" tone="subdued">
+                        Enter the brand key from your Link Flow Setup page
+                        (starts with <code>fb_</code>). You can only set this
+                        once — after that it is locked. Prefer installing the
+                        app from Link Flow Setup so the key is applied
+                        automatically.
+                      </Text>
+                      <FormLayout>
+                        <TextField
+                          label="Link Flow brand key"
+                          value={brandKeyInput}
+                          onChange={setBrandKeyInput}
+                          autoComplete="off"
+                          monospaced
+                          helpText="Usually starts with fb_ · set once, then locked"
+                          placeholder="fb_your_key_here"
+                        />
+                      </FormLayout>
+                      <InlineStack gap="200">
+                        <Button
+                          variant="primary"
+                          onClick={saveBrandKey}
+                          loading={saving}
+                          disabled={saving || !brandKeyInput.trim()}
+                        >
+                          Save &amp; activate
+                        </Button>
+                      </InlineStack>
+                    </>
+                  )}
                 </BlockStack>
               </Card>
             </InlineGrid>
