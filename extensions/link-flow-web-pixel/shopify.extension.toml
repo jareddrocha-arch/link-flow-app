@@ -1,15 +1,17 @@
 # Link Flow Affiliates — Web Pixel (thank-you / checkout_completed)
 # Deploy with: shopify app deploy
-# Activate after install via webPixelCreate (see lib/provision-tracking.ts)
+#
+# Privacy: all purposes false = strictly necessary pixel so it can run
+# without analytics consent (affiliate order attribution is operational).
 
 type = "web_pixel_extension"
 name = "link-flow-web-pixel"
-# UID is assigned by Shopify CLI on first deploy; leave blank or update after deploy
-# uid = ""
 runtime_context = "strict"
+uid = "153dfcfe-b7c4-bce3-b73c-1e094310aea092cccda8"
 
 [customer_privacy]
-analytics = true
+# Strictly necessary for order attribution — do not require analytics consent
+analytics = false
 marketing = false
 preferences = false
 sale_of_data = "disabled"
