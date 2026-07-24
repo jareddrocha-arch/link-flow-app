@@ -174,7 +174,7 @@ export function MerchantDashboard({
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         setBanner({
-          tone: "warning",
+          tone: "critical",
           title: "Couldn’t refresh tracking",
           message:
             body.error ||
@@ -182,17 +182,36 @@ export function MerchantDashboard({
               ? "No access token on file — reinstall the app from Shopify."
               : "Try again or reinstall the app."),
         });
+        // Do NOT auto-reload on failure — keep the error visible
         return;
       }
-      const errCount = Array.isArray(body.errors) ? body.errors.length : 0;
+      const errList: string[] = Array.isArray(body.errors) ? body.errors : [];
+      const errCount = errList.length;
+      const scopes: string = body.scopes || data.store?.scopes || "";
+      const missingPixels =
+        !String(scopes).includes("write_pixels") ||
+        errList.some((e) => /write_pixels|read_customer_events/i.test(e));
+
+      if (errCount || !body.webPixelId) {
+        setBanner({
+          tone: "warning",
+          title: missingPixels
+            ? "Web Pixel needs more permissions"
+            : "Tracking partially updated",
+          message: missingPixels
+            ? `Shopify did not grant write_pixels / read_customer_events. Current scopes: ${scopes || "unknown"}. Update Vercel SCOPES, redeploy, then uninstall and reinstall the app. Details: ${errList.slice(0, 4).join(" · ") || "web pixel not created"}`
+            : `Some steps failed: ${errList.slice(0, 5).join(" · ")}`,
+        });
+        // Keep errors on screen — no auto-reload
+        return;
+      }
+
       setBanner({
-        tone: errCount ? "warning" : "success",
-        title: errCount ? "Tracking partially updated" : "Tracking refreshed",
-        message: errCount
-          ? `Some steps failed: ${(body.errors as string[]).slice(0, 3).join(" · ")}`
-          : "Script tag, web pixel, and webhooks were updated.",
+        tone: "success",
+        title: "Tracking refreshed",
+        message: "Script tag, web pixel, and webhooks were updated.",
       });
-      window.setTimeout(() => window.location.reload(), 1200);
+      window.setTimeout(() => window.location.reload(), 1500);
     } catch (e) {
       setBanner({
         tone: "critical",
@@ -202,7 +221,7 @@ export function MerchantDashboard({
     } finally {
       setProvisioning(false);
     }
-  }, [authHeaders, data.shop, actionToken]);
+  }, [authHeaders, data.shop, actionToken, data.store?.scopes]);
 
   const nextSteps = useMemo(() => {
     const steps: Array<{ done: boolean; title: string; detail: string }> = [
@@ -418,6 +437,20 @@ export function MerchantDashboard({
                         {store.status === "ACTIVE" ? "Connected" : store.status}
                       </Badge>
                     </InlineStack>
+                    <Text as="p" tone="subdued" variant="bodySm" breakWord>
+                      Permissions: {store.scopes || "unknown"}
+                    </Text>
+                    {!store.scopes.includes("write_pixels") ? (
+                      <Banner tone="warning" title="Pixel permission missing">
+                        <p>
+                          This install does not include{" "}
+                          <strong>write_pixels</strong>. Update Vercel{" "}
+                          <code>SCOPES</code> (or rely on the app default),
+                          redeploy, then uninstall and reinstall so Shopify
+                          shows the new permission screen.
+                        </p>
+                      </Banner>
+                    ) : null}
                   </BlockStack>
                 </BlockStack>
               </Card>

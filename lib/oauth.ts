@@ -21,12 +21,22 @@ function getCredentials() {
   return { apiKey, apiSecret };
 }
 
+/** Always request pixel scopes even if Vercel SCOPES env is outdated. */
+const REQUIRED_SCOPES = [
+  "read_products",
+  "read_orders",
+  "write_script_tags",
+  "write_pixels",
+  "read_customer_events",
+] as const;
+
 function getScopes(): string {
-  return (process.env.SCOPES ?? "read_products")
+  const fromEnv = (process.env.SCOPES ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean)
-    .join(",");
+    .filter(Boolean);
+  const merged = new Set<string>([...fromEnv, ...REQUIRED_SCOPES]);
+  return [...merged].join(",");
 }
 
 function cookieOptions() {

@@ -110,13 +110,23 @@ export function getShopify(requestUrl?: string | URL): Shopify {
   const appUrl = resolveAppUrl(requestUrl);
   const { hostName, hostScheme } = parseHost(appUrl);
 
+  const required = [
+    "read_products",
+    "read_orders",
+    "write_script_tags",
+    "write_pixels",
+    "read_customer_events",
+  ];
+  const fromEnv = (process.env.SCOPES ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const scopes = [...new Set([...fromEnv, ...required])];
+
   return shopifyApi({
     apiKey: requireEnv("SHOPIFY_API_KEY"),
     apiSecretKey: requireEnv("SHOPIFY_API_SECRET"),
-    scopes: (process.env.SCOPES ?? "read_products")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
+    scopes,
     hostName,
     hostScheme,
     apiVersion: ApiVersion.April26,
