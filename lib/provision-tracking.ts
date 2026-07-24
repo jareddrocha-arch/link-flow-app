@@ -151,9 +151,14 @@ export async function provisionStoreTracking(
       );
     }
   } catch (e) {
-    errors.push(
-      `web_pixel: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/no extension found/i.test(msg)) {
+      errors.push(
+        "web_pixel: No extension found — the Web Pixel extension is not on this app’s released version. Run `shopify app deploy` for the same Client ID as Vercel SHOPIFY_API_KEY, then reinstall.",
+      );
+    } else {
+      errors.push(`web_pixel: ${msg}`);
+    }
   }
 
   // ── Webhooks ──────────────────────────────────────────────────────────────

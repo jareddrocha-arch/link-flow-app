@@ -1,8 +1,9 @@
 # Learn more: https://shopify.dev/docs/apps/tools/cli/configuration
 # Deploy extensions: shopify app deploy
 
-name = "link-flow-app"
-client_id = "c44d67f1c37c29750718d359d38d160e"
+# Must match the app merchants install (check Admin URL handle + appInstallation.apiKey)
+name = "Link Flow Affiliates App"
+client_id = "83757e483b8c48497463e2e97b377aff"
 application_url = "https://link-flow-app-amber.vercel.app"
 embedded = true
 
@@ -22,8 +23,11 @@ redirect_urls = [
 [webhooks]
 api_version = "2026-04"
 
+  # Order webhooks (orders/paid, orders/create) need Protected Customer Data
+  # approval first — register later via Admin API or re-add here after PCD access.
+  # Thank-you tracking uses the Web Pixel instead.
   [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled", "orders/paid", "orders/create" ]
+  topics = [ "app/uninstalled" ]
   uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
 
   [[webhooks.subscriptions]]
