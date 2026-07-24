@@ -440,14 +440,19 @@ export function MerchantDashboard({
                     <Text as="p" tone="subdued" variant="bodySm" breakWord>
                       Permissions: {store.scopes || "unknown"}
                     </Text>
-                    {!store.scopes.includes("write_pixels") ? (
-                      <Banner tone="warning" title="Pixel permission missing">
+                    {!store.scopes.includes("write_pixels") ||
+                    !store.scopes.includes("read_customer_events") ? (
+                      <Banner tone="warning" title="Pixel permissions incomplete">
                         <p>
-                          This install does not include{" "}
-                          <strong>write_pixels</strong>. Update Vercel{" "}
-                          <code>SCOPES</code> (or rely on the app default),
-                          redeploy, then uninstall and reinstall so Shopify
-                          shows the new permission screen.
+                          Web Pixel needs both <strong>write_pixels</strong> and{" "}
+                          <strong>read_customer_events</strong>. This install
+                          has:{" "}
+                          <code style={{ wordBreak: "break-all" }}>
+                            {store.scopes || "none"}
+                          </code>
+                          . Add the missing scopes in{" "}
+                          <strong>Shopify Dev Dashboard → App → Versions</strong>
+                          , release, then uninstall and reinstall this app.
                         </p>
                       </Banner>
                     ) : null}

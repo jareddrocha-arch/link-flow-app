@@ -91,7 +91,12 @@ export async function provisionStoreTracking(
   const scopes = workingStore.scopes || "";
   if (!scopes.includes("write_pixels")) {
     errors.push(
-      "Missing write_pixels scope — reinstall the app and approve pixel permissions",
+      "Missing write_pixels scope — add it in Partner app scopes + Vercel SCOPES, redeploy, uninstall/reinstall",
+    );
+  }
+  if (!scopes.includes("read_customer_events")) {
+    errors.push(
+      "Missing read_customer_events scope — required for Web Pixel. Add it in Shopify Dev Dashboard scopes, release a new app version, then uninstall/reinstall so Shopify shows the new permission.",
     );
   }
 
@@ -151,21 +156,20 @@ export async function provisionStoreTracking(
     );
   }
 
-  // ── Webhooks (server-side order backup) ───────────────────────────────────
+  // ── Webhooks ──────────────────────────────────────────────────────────────
+  // - app/uninstalled: always register via Admin API
+  // - orders/*: require Protected Customer Data approval in Partner Dashboard;
+  //   optional backup (Web Pixel is primary for thank-you sales)
+  // - customers/* + shop/redact: compliance topics — register only via
+  //   shopify.app.toml / shopify app deploy (REST returns 404)
   const webhookAddress = getWebhookCallbackUrl("/api/webhooks/shopify");
-  // Orders + uninstall + Shopify mandatory privacy compliance topics
-  const topics = [
-    "orders/paid",
-    "orders/create",
-    "app/uninstalled",
-    "customers/data_request",
-    "customers/redact",
-    "shop/redact",
-  ] as const;
+  const coreTopics = ["app/uninstalled"] as const;
+  const orderTopics = ["orders/paid", "orders/create"] as const;
 
   try {
     const existingHooks = await listWebhooks(store.shop, accessToken);
-    for (const topic of topics) {
+
+    for (const topic of coreTopics) {
       const already = existingHooks.find(
         (h) => h.topic === topic && h.address === webhookAddress,
       );
@@ -185,6 +189,37 @@ export async function provisionStoreTracking(
         errors.push(
           `webhook ${topic}: ${e instanceof Error ? e.message : String(e)}`,
         );
+      }
+    }
+
+    for (const topic of orderTopics) {
+      const already = existingHooks.find(
+        (h) => h.topic === topic && h.address === webhookAddress,
+      );
+      if (already) {
+        webhooksRegistered.push(topic);
+        continue;
+      }
+      try {
+        await createWebhook({
+          shop: store.shop,
+          accessToken,
+          topic,
+          address: webhookAddress,
+        });
+        webhooksRegistered.push(topic);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // One clear note instead of two noisy PCD errors
+        if (/protected customer data/i.test(msg)) {
+          if (!errors.some((x) => x.includes("Protected Customer Data"))) {
+            errors.push(
+              "Order webhooks (orders/paid, orders/create) need Protected Customer Data access in the Partner Dashboard (App → API access → Protected customer data). Web Pixel can still track thank-you sales without these.",
+            );
+          }
+        } else {
+          errors.push(`webhook ${topic}: ${msg}`);
+        }
       }
     }
   } catch (e) {

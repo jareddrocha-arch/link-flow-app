@@ -65,10 +65,13 @@ export function beginOAuthRedirect(options: {
   const { apiKey } = getCredentials();
   const state = randomBytes(16).toString("hex");
   const redirectUri = getOAuthRedirectUri(options.requestUrl);
+  const scope = getScopes();
+
+  console.info("[oauth/begin] requesting scopes", { shop, scope, redirectUri });
 
   const authorize = new URL(`https://${shop}/admin/oauth/authorize`);
   authorize.searchParams.set("client_id", apiKey);
-  authorize.searchParams.set("scope", getScopes());
+  authorize.searchParams.set("scope", scope);
   authorize.searchParams.set("redirect_uri", redirectUri);
   authorize.searchParams.set("state", state);
 
