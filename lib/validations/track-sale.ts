@@ -66,14 +66,24 @@ export function validateTrackSaleBody(raw: unknown): TrackSaleValidation {
     }
   }
 
+  // Soft-fail referral: never reject the whole sale because of a bad fa_ref.
+  // ScriptTag / cookies may store plain codes, JSON wrappers, or non-fa- values.
   let referralCode: string | undefined;
   if (body.referralCode != null && body.referralCode !== "") {
-    const r = String(body.referralCode).trim();
-    if (!REFERRAL_CODE_REGEX.test(r)) {
-      details.referralCode = "Invalid referral code format";
-    } else {
+    let r = String(body.referralCode).trim();
+    // Unwrap accidental JSON cookie blobs
+    if (r.charAt(0) === "{") {
+      try {
+        const j = JSON.parse(r) as { code?: string };
+        if (j && typeof j.code === "string") r = j.code.trim();
+      } catch {
+        /* keep raw */
+      }
+    }
+    if (REFERRAL_CODE_REGEX.test(r)) {
       referralCode = r;
     }
+    // else omit referralCode — still record organic sale
   }
 
   let productName: string | undefined;

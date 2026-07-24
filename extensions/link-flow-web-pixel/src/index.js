@@ -4,21 +4,27 @@
  * Fires on every completed checkout (not only referred orders).
  * POSTs to /api/sales/track with brandKey, orderId, amount, currency, products, fa_ref.
  *
- * Note: network calls run inside Shopify’s pixel sandbox iframe — they often do NOT
- * appear under the main Thank You page Network tab. Use Customer events debugger
- * or the “Network” filter for the pixel sandbox / our host.
+ * IMPORTANT — Network tab illusion:
+ *   This code runs inside Shopify’s **strict sandbox iframe**. Outbound fetch()
+ *   calls do NOT appear under the main Thank You page Network panel. Look for:
+ *   - Console messages prefixed with `[Link Flow Pixel]`
+ *   - DevTools → the pixel sandbox frame’s Network tab
+ *   - Shopify Admin → Settings → Customer events → your app pixel → test events
+ *   - App dashboard / Supabase Sale rows after checkout
  */
 import { register } from "@shopify/web-pixels-extension";
 
 const REF_COOKIE = "fa_ref";
 const DEFAULT_API =
   "https://link-flow-app-amber.vercel.app/api/sales/track";
+const LOG = "[Link Flow Pixel]";
 
 function toNum(v) {
   if (v == null || v === "") return null;
   if (typeof v === "number" && isFinite(v) && v > 0) return v;
-  if (typeof v === "object" && v !== null && "amount" in v) {
-    return toNum(v.amount);
+  if (typeof v === "object" && v !== null) {
+    if ("amount" in v) return toNum(v.amount);
+    if ("shopMoney" in v) return toNum(v.shopMoney);
   }
   const n = parseFloat(String(v).replace(/[^0-9.-]/g, ""));
   return isFinite(n) && n > 0 ? n : null;
@@ -28,8 +34,8 @@ function shopifyNumericId(value) {
   if (value == null || value === "") return null;
   const s = String(value);
   const m =
-    s.match(/\/(?:Product|Order)\/(\d+)/i) ||
-    s.match(/^gid:\/\/shopify\/(?:Product|Order)\/(\d+)/i) ||
+    s.match(/\/(?:Product|Order|CheckoutLineItem)\/(\d+)/i) ||
+    s.match(/^gid:\/\/shopify\/(?:Product|Order|CheckoutLineItem)\/(\d+)/i) ||
     s.match(/^(\d+)$/);
   return m ? m[1] : s;
 }
@@ -42,7 +48,7 @@ function parseReferralCookie(raw) {
       const j = JSON.parse(decoded);
       if (j && j.code) return String(j.code);
     } catch {
-      /* plain */
+      /* plain string */
     }
     if (decoded && decoded.charAt(0) !== "{") return decoded;
   } catch {
@@ -62,6 +68,13 @@ async function readReferralCode(browser, event) {
   try {
     const fromLs = await browser.localStorage.getItem(REF_COOKIE);
     const code = parseReferralCookie(fromLs);
+    if (code) return code;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const fromSs = await browser.sessionStorage.getItem(REF_COOKIE);
+    const code = parseReferralCookie(fromSs);
     if (code) return code;
   } catch {
     /* ignore */
@@ -95,18 +108,31 @@ async function captureFirstClick(browser, event) {
     if (!code) return;
     const existing = await readReferralCode(browser, event);
     if (existing) return;
-    const entry = JSON.stringify({ code: String(code), capturedAt: Date.now() });
+    const entry = JSON.stringify({
+      code: String(code),
+      capturedAt: Date.now(),
+    });
     try {
       await browser.localStorage.setItem(REF_COOKIE, entry);
     } catch {
       /* ignore */
     }
     try {
+      await browser.sessionStorage.setItem(REF_COOKIE, entry);
+    } catch {
+      /* ignore */
+    }
+    // browser.cookie.set accepts "name=value; attrs" or (name, value)
+    try {
       await browser.cookie.set(
         `${REF_COOKIE}=${encodeURIComponent(entry)}; path=/; max-age=${90 * 86400}; SameSite=Lax`,
       );
     } catch {
-      /* ignore */
+      try {
+        await browser.cookie.set(REF_COOKIE, encodeURIComponent(entry));
+      } catch {
+        /* ignore */
+      }
     }
   } catch {
     /* ignore */
@@ -114,11 +140,38 @@ async function captureFirstClick(browser, event) {
 }
 
 function extractCheckout(event) {
+  if (!event) return null;
+  const data = event.data || {};
   return (
-    (event && event.data && event.data.checkout) ||
-    (event && event.data && event.data.checkoutCompleted && event.data.checkoutCompleted.checkout) ||
+    data.checkout ||
+    (data.checkoutCompleted && data.checkoutCompleted.checkout) ||
     null
   );
+}
+
+function sumLineItems(checkout) {
+  const items = (checkout && (checkout.lineItems || checkout.line_items)) || [];
+  let sum = 0;
+  for (const item of items) {
+    const line =
+      toNum(item.finalLinePrice) ||
+      toNum(item.finalLinePrice && item.finalLinePrice.amount) ||
+      toNum(item.variant && item.variant.price) ||
+      toNum(item.price) ||
+      null;
+    if (line) sum += line;
+  }
+  return sum > 0 ? sum : null;
+}
+
+function sumTransactions(checkout) {
+  const txs = (checkout && checkout.transactions) || [];
+  let sum = 0;
+  for (const tx of txs) {
+    const a = toNum(tx.amount) || toNum(tx.amount && tx.amount.amount);
+    if (a) sum += a;
+  }
+  return sum > 0 ? sum : null;
 }
 
 function extractAmount(checkout) {
@@ -134,6 +187,8 @@ function extractAmount(checkout) {
         checkout.totalPriceSet.shopMoney &&
         checkout.totalPriceSet.shopMoney.amount,
     ) ||
+    sumTransactions(checkout) ||
+    sumLineItems(checkout) ||
     null
   );
 }
@@ -143,9 +198,14 @@ function extractCurrency(checkout) {
   return (
     (checkout.totalPrice && checkout.totalPrice.currencyCode) ||
     checkout.currencyCode ||
+    (checkout.subtotalPrice && checkout.subtotalPrice.currencyCode) ||
     (checkout.totalPriceSet &&
       checkout.totalPriceSet.shopMoney &&
       checkout.totalPriceSet.shopMoney.currencyCode) ||
+    (checkout.transactions &&
+      checkout.transactions[0] &&
+      checkout.transactions[0].amount &&
+      checkout.transactions[0].amount.currencyCode) ||
     "USD"
   );
 }
@@ -156,8 +216,8 @@ function extractOrderId(checkout) {
   return (
     shopifyNumericId(order.id) ||
     (order.name != null ? String(order.name) : null) ||
-    (checkout.token != null ? String(checkout.token) : null) ||
-    (checkout.orderId != null ? String(checkout.orderId) : null)
+    (checkout.orderId != null ? String(checkout.orderId) : null) ||
+    (checkout.token != null ? String(checkout.token) : null)
   );
 }
 
@@ -180,65 +240,86 @@ function extractProduct(checkout) {
   };
 }
 
-function isThankYouContext(event) {
+function pageLocation(event, init) {
   try {
-    const href =
+    const loc =
       (event &&
         event.context &&
         event.context.document &&
-        event.context.document.location &&
-        event.context.document.location.href) ||
-      "";
-    const path =
-      (event &&
-        event.context &&
-        event.context.document &&
-        event.context.document.location &&
-        event.context.document.location.pathname) ||
-      "";
-    return /thank|order-status|orders\/|checkouts\/.+\/(thank|processing)/i.test(
-      href + " " + path,
-    );
+        event.context.document.location) ||
+      (init &&
+        init.context &&
+        init.context.document &&
+        init.context.document.location) ||
+      null;
+    if (!loc) return { href: "", path: "", search: "" };
+    return {
+      href: String(loc.href || ""),
+      path: String(loc.pathname || ""),
+      search: String(loc.search || ""),
+    };
   } catch {
-    return false;
+    return { href: "", path: "", search: "" };
   }
 }
 
-async function sendSale(apiUrl, payload) {
-  // Use absolute URL only
+function isThankYouContext(event, init) {
+  const { href, path } = pageLocation(event, init);
+  return /thank|order-status|\/orders\/|checkouts\/.+\/(thank|processing)|\/thank_you/i.test(
+    `${href} ${path}`,
+  );
+}
+
+/**
+ * POST sale. Prefer fetch(keepalive). Fall back to browser.sendBeacon if fetch throws.
+ */
+async function sendSaleWithFallback(browser, apiUrl, payload) {
   const url = String(apiUrl || DEFAULT_API);
-  console.log("[Link Flow Pixel] POST", url, payload);
+  const body = JSON.stringify(payload);
+  console.log(LOG, "POST", url, payload);
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify(payload),
-    keepalive: true,
-    // credentials omitted — cross-origin to our API
-  });
-
-  console.log("[Link Flow Pixel] response", res && res.status);
-  return res;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body,
+      keepalive: true,
+      mode: "cors",
+      credentials: "omit",
+    });
+    console.log(LOG, "response", res && res.status, res && res.ok);
+    return res;
+  } catch (fetchErr) {
+    console.warn(LOG, "fetch failed, trying sendBeacon", fetchErr);
+    try {
+      const ok = await browser.sendBeacon(url, body);
+      console.log(LOG, "sendBeacon result", ok);
+      return { ok: Boolean(ok), status: ok ? 202 : 0 };
+    } catch (beaconErr) {
+      console.error(LOG, "sendBeacon also failed", beaconErr);
+      throw fetchErr;
+    }
+  }
 }
 
 register(({ analytics, browser, settings, init }) => {
-  // Settings from webPixelCreate — always strings
   const brandKey = String((settings && settings.brandKey) || "").trim();
   let apiUrl = String((settings && settings.apiUrl) || DEFAULT_API).trim();
   if (!apiUrl) apiUrl = DEFAULT_API;
-
-  // Never track to localhost from a live shop
   if (/localhost|127\.0\.0\.1/i.test(apiUrl)) {
     apiUrl = DEFAULT_API;
   }
 
-  console.log("[Link Flow Pixel] boot", {
+  const privacy = (init && init.customerPrivacy) || {};
+  console.log(LOG, "boot", {
     brandKey: brandKey || "(missing)",
     apiUrl,
     hasInit: Boolean(init),
+    privacy,
+    page: pageLocation(null, init),
   });
 
   const sentKeys = new Set();
@@ -248,24 +329,28 @@ register(({ analytics, browser, settings, init }) => {
       await captureFirstClick(browser, event);
 
       if (!brandKey) {
-        console.warn("[Link Flow Pixel] skip: no brandKey in settings");
+        console.warn(LOG, "skip: no brandKey in settings — re-run provision");
         return;
       }
 
       const checkout = extractCheckout(event);
       if (!checkout) {
-        console.warn("[Link Flow Pixel] skip: no checkout on event", reason);
+        console.warn(LOG, "skip: no checkout on event", reason, {
+          keys: event && event.data ? Object.keys(event.data) : [],
+        });
         return;
       }
 
       const amount = extractAmount(checkout);
       if (!amount) {
-        console.warn(
-          "[Link Flow Pixel] skip: no positive amount",
-          reason,
-          checkout && checkout.totalPrice,
-        );
-        // Still try with 0? No — API requires positive amount
+        // Still try to record if we have an order id (API requires amount > 0,
+        // so log full checkout money fields for diagnosis).
+        console.warn(LOG, "skip: no positive amount", reason, {
+          totalPrice: checkout.totalPrice,
+          subtotalPrice: checkout.subtotalPrice,
+          transactions: checkout.transactions,
+          lineItemCount: (checkout.lineItems || []).length,
+        });
         return;
       }
 
@@ -274,23 +359,17 @@ register(({ analytics, browser, settings, init }) => {
       const currency = extractCurrency(checkout);
       const referralCode = await readReferralCode(browser, event);
 
-      const dedupe = orderId || `${amount}-${currency}`;
-      if (sentKeys.has(dedupe)) {
-        console.log("[Link Flow Pixel] skip: already sent", dedupe);
+      const dedupe = `${orderId || "no-order"}|${amount}|${currency}|${reason}`;
+      // Prefer order-id level dedupe across reasons
+      const orderDedupe = orderId ? `order:${orderId}` : dedupe;
+      if (sentKeys.has(orderDedupe) || sentKeys.has(dedupe)) {
+        console.log(LOG, "skip: already sent", orderDedupe);
         return;
       }
+      sentKeys.add(orderDedupe);
       sentKeys.add(dedupe);
 
-      let pageUrl;
-      try {
-        pageUrl =
-          event.context &&
-          event.context.document &&
-          event.context.document.location &&
-          event.context.document.location.href;
-      } catch {
-        pageUrl = undefined;
-      }
+      const { href: pageUrl } = pageLocation(event, init);
 
       const payload = {
         brandKey,
@@ -301,42 +380,59 @@ register(({ analytics, browser, settings, init }) => {
       };
       if (orderId) payload.orderId = String(orderId);
       if (productName) payload.productName = String(productName);
+      // Only attach referral when present — invalid formats are stripped server-side
       if (referralCode) payload.referralCode = String(referralCode);
       if (pageUrl) payload.pageUrl = String(pageUrl);
 
-      await sendSale(apiUrl, payload);
+      await sendSaleWithFallback(browser, apiUrl, payload);
     } catch (err) {
-      console.error("[Link Flow Pixel] track failed", err);
+      console.error(LOG, "track failed", err);
     }
   }
 
-  // Primary: official purchase event (usually Thank You page)
+  // Primary: official purchase event (Thank You / first post-purchase upsell page)
   analytics.subscribe("checkout_completed", (event) => {
-    console.log("[Link Flow Pixel] event checkout_completed");
+    console.log(LOG, "event checkout_completed", {
+      hasCheckout: Boolean(extractCheckout(event)),
+      amount: extractAmount(extractCheckout(event)),
+      orderId: extractOrderId(extractCheckout(event)),
+    });
     trackCheckout(event, "checkout_completed");
   });
 
-  // Backup: some shops / revisits only emit page_viewed on order status
+  // Some stores surface order context only after navigation / status load
   analytics.subscribe("page_viewed", (event) => {
     captureFirstClick(browser, event);
-    if (isThankYouContext(event) && extractCheckout(event)) {
-      console.log("[Link Flow Pixel] event page_viewed thank-you context");
-      trackCheckout(event, "page_viewed_thank_you");
+    const checkout = extractCheckout(event);
+    if (isThankYouContext(event, init)) {
+      console.log(LOG, "event page_viewed (thank-you context)", {
+        hasCheckout: Boolean(checkout),
+        page: pageLocation(event, init),
+      });
+      if (checkout) {
+        trackCheckout(event, "page_viewed_thank_you");
+      }
     }
   });
 
-  // If checkout is already available at boot (rare), try once
-  try {
-    const bootCheckout =
-      init && init.data && (init.data.checkout || init.data.cart);
-    if (bootCheckout && bootCheckout.order) {
-      console.log("[Link Flow Pixel] init checkout present");
-      trackCheckout(
-        { data: { checkout: bootCheckout }, context: init.context },
-        "init",
-      );
+  // Diagnostic: log any checkout_* events so we can see what fires on this store
+  analytics.subscribe("all_standard_events", (event) => {
+    try {
+      const name = event && event.name;
+      if (!name) return;
+      if (
+        name === "checkout_completed" ||
+        name === "checkout_started" ||
+        name === "payment_info_submitted" ||
+        name === "checkout_shipping_info_submitted" ||
+        (isThankYouContext(event, init) && name === "page_viewed")
+      ) {
+        console.log(LOG, "standard_event", name, {
+          hasCheckout: Boolean(extractCheckout(event)),
+        });
+      }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
-  }
+  });
 });
