@@ -10,7 +10,7 @@ import { provisionStoreTracking } from "@/lib/provision-tracking";
  * Re-run ScriptTag + Web Pixel + webhook install for a connected shop.
  *
  * POST /api/admin/provision?shop=…
- * Auth (production): Authorization: Bearer <shop action token>
+ * Auth (production): Authorization: Bearer <Shopify session token or action token>
  *   or lf_shop_session cookie, or DEBUG_SECRET
  *
  * Uses Store.accessToken from DB (refreshed/migrated as needed).
@@ -61,10 +61,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Unauthorized — open the app from Shopify Admin so a valid action token is issued, or reinstall after updating scopes.",
+          "Unauthorized — open the app from Shopify Admin so App Bridge can issue a session token, or reinstall after updating scopes.",
         code: "session_unauthorized",
       },
-      { status: 401 },
+      {
+        status: 401,
+        headers: {
+          // App Bridge retries once with a fresh session token when it sees this
+          "X-Shopify-Retry-Invalid-Session-Request": "1",
+        },
+      },
     );
   }
 
@@ -96,7 +102,8 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json(
     {
-      error: "Use POST with shop + Authorization: Bearer <actionToken>",
+      error:
+        "Use POST with shop + Authorization: Bearer <Shopify session token>",
       method: "POST",
     },
     { status: 405 },

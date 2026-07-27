@@ -7,6 +7,8 @@ type HomeProps = {
   searchParams: Promise<{
     shop?: string;
     host?: string;
+    id_token?: string;
+    embedded?: string;
     onboarding?: string;
     installed?: string;
   }>;
@@ -14,8 +16,12 @@ type HomeProps = {
 
 /**
  * Embedded app home / post-install onboarding dashboard.
- * Issues a short-lived action token so API calls work inside Shopify Admin
- * iframes (where third-party cookies are blocked).
+ *
+ * Auth for API calls (in order):
+ * 1. App Bridge session token via shopify.idToken() (App Store requirement)
+ * 2. Short-lived server action token as fallback when not in Admin
+ *
+ * Third-party cookies are unreliable in the Admin iframe — do not rely on them.
  */
 export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
@@ -25,6 +31,7 @@ export default async function Home({ searchParams }: HomeProps) {
     params.installed === "1" ||
     (data.store?.status === "ACTIVE" && data.sales.totalCount === 0);
 
+  // Fallback only — preferred auth is App Bridge session tokens on the client
   let actionToken: string | null = null;
   if (data.shop && data.store?.status === "ACTIVE") {
     try {

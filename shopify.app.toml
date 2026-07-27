@@ -5,6 +5,7 @@
 name = "Link Flow Affiliates App"
 client_id = "83757e483b8c48497463e2e97b377aff"
 application_url = "https://link-flow-app-amber.vercel.app"
+# Embedded in Shopify Admin — requires App Bridge CDN + session tokens
 embedded = true
 
 [build]
@@ -13,6 +14,14 @@ automatically_update_urls_on_dev = false
 [access_scopes]
 # write_pixels + read_customer_events required for Web Pixel activation
 scopes = "read_products,read_orders,write_script_tags,write_pixels,read_customer_events"
+# Shopify managed install (omit or false). Custom OAuth still works for brand-key installs.
+use_legacy_install_flow = false
+
+# Direct API Access for App Bridge authenticated Admin GraphQL from the iframe.
+# Prevents console warnings when using shopify:admin/* fetch helpers.
+[access.admin]
+embedded_app_direct_api_access = true
+direct_api_mode = "offline"
 
 [auth]
 redirect_urls = [

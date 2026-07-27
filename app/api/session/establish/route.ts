@@ -9,8 +9,8 @@ import { getStoreByShop, normalizeShop } from "@/lib/stores";
  * This does not expose the access token; it only binds the browser session to that shop.
  *
  * Note: anyone who knows a shop domain could establish a session for that shop if
- * the app is installed. For non-embedded installs this is acceptable for
- * "Refresh tracking"; for higher security use App Bridge session tokens later.
+ * the app is installed. Prefer App Bridge session tokens (Authorization Bearer)
+ * for embedded Admin mutations — this cookie path is a secondary fallback.
  */
 export async function POST(request: NextRequest) {
   let shopParam: string | null =

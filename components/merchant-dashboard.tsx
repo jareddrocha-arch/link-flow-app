@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Banner,
@@ -32,9 +32,27 @@ import type { MerchantDashboardData } from "@/lib/dashboard";
 type Props = {
   data: MerchantDashboardData;
   showOnboarding?: boolean;
-  /** Short-lived signed token from the server (works in Admin iframes without cookies) */
+  /**
+   * Fallback signed token from the server when App Bridge session tokens
+   * are unavailable (e.g. standalone open). Prefer shopify.idToken().
+   */
   actionToken?: string | null;
 };
+
+/** App Bridge session token (preferred) or server-issued action token. */
+async function resolveAuthBearer(
+  actionToken: string | null | undefined,
+): Promise<string | null> {
+  try {
+    if (typeof window !== "undefined" && window.shopify?.idToken) {
+      const sessionToken = await window.shopify.idToken();
+      if (sessionToken) return sessionToken;
+    }
+  } catch {
+    /* Not in Admin iframe or App Bridge not ready */
+  }
+  return actionToken?.trim() || null;
+}
 
 function StatusPill({
   ok,
@@ -81,6 +99,8 @@ export function MerchantDashboard({
   );
   const [saving, setSaving] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
+  /** True once App Bridge idToken is available or we have an action token */
+  const [canAuth, setCanAuth] = useState(Boolean(actionToken));
   const [banner, setBanner] = useState<{
     tone: "success" | "warning" | "critical" | "info";
     title: string;
@@ -94,12 +114,49 @@ export function MerchantDashboard({
   const webPixelOk = data.tracking.webPixel === "ok";
   const trackingActive = scriptOk || webPixelOk || webhooksOk;
 
-  const authHeaders = useCallback((): HeadersInit => {
+  // Detect App Bridge session tokens and handshake with the backend so
+  // Partner Dashboard "Embedded app checks" observe session-token auth.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const token = await resolveAuthBearer(actionToken);
+      if (!cancelled) setCanAuth(Boolean(token));
+
+      // Prefer a real App Bridge JWT (not the fallback action token)
+      try {
+        if (
+          typeof window !== "undefined" &&
+          window.shopify?.idToken &&
+          data.shop
+        ) {
+          const sessionToken = await window.shopify.idToken();
+          if (!sessionToken || cancelled) return;
+          await fetch("/api/session/verify", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${sessionToken}`,
+            },
+            credentials: "include",
+            body: JSON.stringify({ shop: data.shop }),
+          });
+        }
+      } catch {
+        /* standalone / App Bridge not ready — action token still works */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [actionToken, data.shop]);
+
+  const authHeaders = useCallback(async (): Promise<HeadersInit> => {
     const h: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (actionToken) {
-      h.Authorization = `Bearer ${actionToken}`;
+    const bearer = await resolveAuthBearer(actionToken);
+    if (bearer) {
+      h.Authorization = `Bearer ${bearer}`;
     }
     return h;
   }, [actionToken]);
@@ -119,14 +176,16 @@ export function MerchantDashboard({
     setSaving(true);
     setBanner(null);
     try {
+      const headers = await authHeaders();
       const res = await fetch("/api/store/settings", {
         method: "POST",
-        headers: authHeaders(),
+        headers,
         credentials: "include",
         body: JSON.stringify({
           shop: data.shop,
           brandKey: brandKeyInput.trim(),
           reprovision: true,
+          // Fallback only; prefer Authorization session token from App Bridge
           actionToken: actionToken || undefined,
         }),
       });
@@ -163,9 +222,10 @@ export function MerchantDashboard({
     setBanner(null);
     try {
       const qs = new URLSearchParams({ shop: data.shop });
+      const headers = await authHeaders();
       const res = await fetch(`/api/admin/provision?${qs.toString()}`, {
         method: "POST",
-        headers: authHeaders(),
+        headers,
         credentials: "include",
         body: JSON.stringify({
           shop: data.shop,
@@ -222,7 +282,7 @@ export function MerchantDashboard({
     } finally {
       setProvisioning(false);
     }
-  }, [authHeaders, data.shop, actionToken, data.store?.scopes]);
+  }, [authHeaders, data.shop, actionToken, data.store]);
 
   const nextSteps = useMemo(() => {
     const steps: Array<{ done: boolean; title: string; detail: string }> = [
@@ -297,11 +357,6 @@ export function MerchantDashboard({
     s.status,
     new Date(s.createdAt).toLocaleString(),
   ]);
-
-  const brandDirty =
-    !brandKeyLocked &&
-    brandKeyInput.trim() !== "" &&
-    brandKeyInput.trim() !== (store.brandKey ?? "");
 
   return (
     <Page
@@ -397,7 +452,7 @@ export function MerchantDashboard({
                     <Button
                       onClick={reProvision}
                       loading={provisioning}
-                      disabled={provisioning || !actionToken}
+                      disabled={provisioning || !canAuth}
                     >
                       Refresh tracking
                     </Button>

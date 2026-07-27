@@ -48,9 +48,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Unauthorized — open the app from Shopify Admin (action token required in embedded mode).",
+          "Unauthorized — open the app from Shopify Admin (session token or action token required in embedded mode).",
       },
-      { status: 401 },
+      {
+        status: 401,
+        headers: {
+          "X-Shopify-Retry-Invalid-Session-Request": "1",
+        },
+      },
     );
   }
 

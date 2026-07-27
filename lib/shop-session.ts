@@ -103,20 +103,25 @@ export function setShopSessionCookie(
   const normalized = normalizeShop(shop);
   if (!normalized) return;
 
+  // Embedded Admin iframes treat cookies as third-party; SameSite=None; Secure
+  // is required if the cookie is ever used inside the iframe. Session tokens
+  // remain the primary auth path for App Store compliance.
+  const isProd = process.env.NODE_ENV === "production";
   response.cookies.set(SHOP_SESSION_COOKIE, encodeSession(normalized), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
     path: "/",
     maxAge: SHOP_SESSION_MAX_AGE,
   });
 }
 
 export function clearShopSessionCookie(response: NextResponse): void {
+  const isProd = process.env.NODE_ENV === "production";
   response.cookies.set(SHOP_SESSION_COOKIE, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
     path: "/",
     maxAge: 0,
   });
@@ -193,8 +198,12 @@ function extractBearerToken(request?: NextRequest): string | null {
  * True if request is allowed to manage this shop:
  * - non-production, or
  * - DEBUG_SECRET key matches, or
+ * - valid Shopify App Bridge session token (JWT Bearer / id_token) for this shop, or
  * - valid signed action token (Bearer / header / options.actionToken) for this shop, or
  * - valid signed lf_shop_session cookie for this shop
+ *
+ * Session tokens are the App Store–required path for embedded Admin iframes
+ * (third-party cookies are blocked).
  */
 export async function isAuthorizedForShop(
   shop: string,
@@ -218,13 +227,32 @@ export async function isAuthorizedForShop(
     return true;
   }
 
-  // Preferred for embedded Admin (no third-party cookies)
-  const actionToken =
+  const bearerOrBody =
     options?.actionToken || extractBearerToken(request) || null;
-  if (verifyShopActionToken(actionToken, normalized)) {
+
+  // 1) Shopify App Bridge session token (preferred for embedded Admin)
+  if (bearerOrBody || request) {
+    const { isShopifySessionTokenForShop, extractSessionTokenFromRequest } =
+      await import("@/lib/session-token");
+    const sessionJwt =
+      bearerOrBody || extractSessionTokenFromRequest(request) || null;
+    if (
+      await isShopifySessionTokenForShop(
+        sessionJwt,
+        normalized,
+        request?.url,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  // 2) App-issued action token (fallback when App Bridge is unavailable)
+  if (verifyShopActionToken(bearerOrBody, normalized)) {
     return true;
   }
 
+  // 3) First-party cookie (standalone browser / same-site)
   try {
     const cookieStore = await cookies();
     const raw = cookieStore.get(SHOP_SESSION_COOKIE)?.value;

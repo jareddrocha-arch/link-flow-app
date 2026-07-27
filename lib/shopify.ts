@@ -123,6 +123,11 @@ export function getShopify(requestUrl?: string | URL): Shopify {
     .filter(Boolean);
   const scopes = [...new Set([...fromEnv, ...required])];
 
+  // Must match shopify.app.toml `embedded = true` for App Store review.
+  // Override only if you intentionally ship a non-embedded build.
+  const isEmbeddedApp =
+    process.env.SHOPIFY_APP_EMBEDDED?.trim() !== "false";
+
   return shopifyApi({
     apiKey: requireEnv("SHOPIFY_API_KEY"),
     apiSecretKey: requireEnv("SHOPIFY_API_SECRET"),
@@ -130,7 +135,7 @@ export function getShopify(requestUrl?: string | URL): Shopify {
     hostName,
     hostScheme,
     apiVersion: ApiVersion.April26,
-    isEmbeddedApp: process.env.SHOPIFY_APP_EMBEDDED === "true",
+    isEmbeddedApp,
   });
 }
 

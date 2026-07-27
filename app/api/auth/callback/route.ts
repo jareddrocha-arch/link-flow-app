@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearOAuthCookies, completeOAuth } from "@/lib/oauth";
 import { provisionStoreTracking } from "@/lib/provision-tracking";
+import { buildEmbeddedAdminAppUrl } from "@/lib/session-token";
 import { setShopSessionCookie } from "@/lib/shop-session";
 import { upsertStoreFromOAuth } from "@/lib/stores";
 
 /**
  * Complete Shopify OAuth, persist Store, inject tracking ScriptTag + webhooks.
  * Redirect URI: {HOST}/api/auth/callback
+ *
+ * After install, redirect into Shopify Admin embedded app URL so App Bridge
+ * and session tokens work (required for App Store embedded checks).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -55,25 +59,38 @@ export async function GET(request: NextRequest) {
       status: store.status,
     });
 
-    // Land on the embedded dashboard with onboarding UI
-    const redirectUrl = new URL("/", request.url);
-    redirectUrl.searchParams.set("shop", store.shop);
-    redirectUrl.searchParams.set("installed", "1");
-    redirectUrl.searchParams.set("onboarding", "1");
-    if (store.brandKey) {
-      redirectUrl.searchParams.set("brandKey", store.brandKey);
-    }
-    if (provision?.scriptTagId) {
-      redirectUrl.searchParams.set("scriptTag", "1");
-    }
-    if (provision?.webPixelId) {
-      redirectUrl.searchParams.set("webPixel", "1");
-    }
-    if (provision?.webhooks?.length) {
-      redirectUrl.searchParams.set("webhooks", provision.webhooks.join(","));
+    const apiKey = process.env.SHOPIFY_API_KEY?.trim() || "";
+    const host = request.nextUrl.searchParams.get("host");
+    const extraParams: Record<string, string | undefined | null> = {
+      shop: store.shop,
+      installed: "1",
+      onboarding: "1",
+      brandKey: store.brandKey,
+      scriptTag: provision?.scriptTagId ? "1" : undefined,
+      webPixel: provision?.webPixelId ? "1" : undefined,
+      webhooks: provision?.webhooks?.length
+        ? provision.webhooks.join(",")
+        : undefined,
+    };
+
+    // Prefer landing inside Admin iframe so App Bridge initializes
+    let redirectTarget: string;
+    if (apiKey) {
+      redirectTarget = buildEmbeddedAdminAppUrl({
+        shop: store.shop,
+        apiKey,
+        host,
+        searchParams: extraParams,
+      });
+    } else {
+      const fallback = new URL("/", request.url);
+      for (const [k, v] of Object.entries(extraParams)) {
+        if (v != null && v !== "") fallback.searchParams.set(k, v);
+      }
+      redirectTarget = fallback.toString();
     }
 
-    const response = NextResponse.redirect(redirectUrl);
+    const response = NextResponse.redirect(redirectTarget);
     clearOAuthCookies(response);
     setShopSessionCookie(response, store.shop);
     return response;
