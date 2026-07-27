@@ -4,20 +4,78 @@ import { recordStoreSale } from "@/lib/record-sale";
 import { normalizeShop } from "@/lib/stores";
 import { cleanupShopUninstall } from "@/lib/uninstall";
 
+/**
+ * Verify Shopify webhook HMAC (X-Shopify-Hmac-SHA256).
+ *
+ * Must use the **raw request body bytes** (not re-serialized JSON) and the
+ * app Client secret (SHOPIFY_API_SECRET). Digest is base64 HMAC-SHA256.
+ *
+ * App Store automated check: invalid → false (caller returns 401);
+ * valid → true (caller returns 200).
+ */
 export function verifyShopifyWebhookHmac(
-  rawBody: string,
-  hmacHeader: string | null,
+  rawBody: string | Buffer,
+  hmacHeader: string | null | undefined,
 ): boolean {
-  if (!hmacHeader) return false;
+  const hmac = typeof hmacHeader === "string" ? hmacHeader.trim() : "";
+  if (!hmac) return false;
+
+  const secret = process.env.SHOPIFY_API_SECRET?.trim();
+  if (!secret) {
+    console.error(
+      "[webhook] SHOPIFY_API_SECRET is missing — cannot verify HMAC",
+    );
+    return false;
+  }
+
+  // Exact body bytes Shopify signed (Buffer preserves wire encoding)
+  const bodyBuf = Buffer.isBuffer(rawBody)
+    ? rawBody
+    : Buffer.from(rawBody, "utf8");
+
+  const digest = createHmac("sha256", secret).update(bodyBuf).digest("base64");
+
+  // Compare base64 strings as utf8 buffers with constant-time equality.
+  // (Shopify sends the digest as base64 text in the header.)
+  try {
+    const a = Buffer.from(digest, "utf8");
+    const b = Buffer.from(hmac, "utf8");
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Optional binary-safe compare (decoded base64 hash bytes).
+ * Used in tests / if header ever differs in padding presentation.
+ */
+export function verifyShopifyWebhookHmacBinary(
+  rawBody: string | Buffer,
+  hmacHeader: string | null | undefined,
+): boolean {
+  const hmac = typeof hmacHeader === "string" ? hmacHeader.trim() : "";
+  if (!hmac) return false;
   const secret = process.env.SHOPIFY_API_SECRET?.trim();
   if (!secret) return false;
 
-  const digest = createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
+  const bodyBuf = Buffer.isBuffer(rawBody)
+    ? rawBody
+    : Buffer.from(rawBody, "utf8");
 
+  const computed = createHmac("sha256", secret).update(bodyBuf).digest();
+  let received: Buffer;
   try {
-    const a = Buffer.from(digest);
-    const b = Buffer.from(hmacHeader);
-    return a.length === b.length && timingSafeEqual(a, b);
+    received = Buffer.from(hmac, "base64");
+  } catch {
+    return false;
+  }
+  if (computed.length !== received.length || received.length === 0) {
+    return false;
+  }
+  try {
+    return timingSafeEqual(computed, received);
   } catch {
     return false;
   }

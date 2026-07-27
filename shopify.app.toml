@@ -39,6 +39,9 @@ api_version = "2026-04"
   topics = [ "app/uninstalled" ]
   uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
 
+  # Mandatory compliance webhooks (App Store requirement).
+  # All three topics share the same HTTPS endpoint; the handler verifies
+  # X-Shopify-Hmac-SHA256 on the raw body before acknowledging with 200.
   [[webhooks.subscriptions]]
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
   uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
