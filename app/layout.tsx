@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -14,21 +13,25 @@ const geistMono = Geist_Mono({
 });
 
 /**
- * Public Client ID for App Bridge (safe to expose). Must be present in the
- * initial HTML as <meta name="shopify-api-key"> — not client-only rendered.
+ * Public Client ID for App Bridge (safe to expose).
+ * Must appear in the INITIAL HTML as:
+ *   <meta name="shopify-api-key" content="...">
+ *   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+ * Do not load App Bridge via next/script — that rewrites to a preload +
+ * (self.__next_s||[]).push(...) which Partner "Embedded app checks" miss.
  */
 const shopifyApiKey =
   process.env.SHOPIFY_API_KEY?.trim() ||
   process.env.NEXT_PUBLIC_SHOPIFY_API_KEY?.trim() ||
-  "";
+  // Public client_id from shopify.app.toml (safe fallback so meta is never empty)
+  "83757e483b8c48497463e2e97b377aff";
 
 export const metadata: Metadata = {
   title: "Link Flow Affiliates",
   description: "Shopify affiliate tracking and attribution for your store",
-  // Renders <meta name="shopify-api-key" content="…"> for App Bridge CDN
-  ...(shopifyApiKey
-    ? { other: { "shopify-api-key": shopifyApiKey } }
-    : {}),
+  other: {
+    "shopify-api-key": shopifyApiKey,
+  },
 };
 
 // Privacy policy is public at /privacy for Partner Dashboard + merchant review
@@ -43,18 +46,17 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-white">
+      <head>
         {/*
-          Latest App Bridge from Shopify CDN, loaded before other scripts.
-          beforeInteractive injects into initial HTML ahead of Next.js bundles.
-          Required for App Store "Embedded app checks".
+          Official App Bridge bootstrap for embedded apps.
+          Must be literal tags in the first HTML response (not injected after
+          hydration). Partner automated checks look for these exact patterns.
         */}
-        <Script
-          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-          strategy="beforeInteractive"
-        />
-        {children}
-      </body>
+        <meta name="shopify-api-key" content={shopifyApiKey} />
+        {/* eslint-disable-next-line @next/next/no-sync-scripts -- Shopify requires sync CDN load in initial HTML */}
+        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+      </head>
+      <body className="min-h-full flex flex-col bg-white">{children}</body>
     </html>
   );
 }
