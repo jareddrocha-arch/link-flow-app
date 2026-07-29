@@ -29,6 +29,7 @@ import {
 } from "@shopify/polaris-icons";
 import type { MerchantDashboardData } from "@/lib/dashboard";
 import { BrandConnectScreen } from "@/components/brand-connect-screen";
+import { CopyEmailLink } from "@/components/copy-email-link";
 
 type Props = {
   data: MerchantDashboardData;
@@ -580,9 +581,7 @@ export function MerchantDashboard({
                         <p>
                           For security, the brand key cannot be edited in the
                           app once it is set. Email{" "}
-                          <Link url="mailto:support@linkflowaffiliates.com">
-                            support@linkflowaffiliates.com
-                          </Link>{" "}
+                          <CopyEmailLink email="support@linkflowaffiliates.com" />{" "}
                           if you need it updated or moved to another store.
                         </p>
                       </Banner>
@@ -732,9 +731,7 @@ export function MerchantDashboard({
                 <Text as="p" tone="subdued">
                   We only use order and referral data to power affiliate
                   tracking. Questions or deletion requests:{" "}
-                  <Link url="mailto:support@linkflowaffiliates.com">
-                    support@linkflowaffiliates.com
-                  </Link>
+                  <CopyEmailLink email="support@linkflowaffiliates.com" />
                 </Text>
                 <Link url="/privacy">Full Privacy Policy</Link>
               </BlockStack>
