@@ -11,17 +11,19 @@ type HomeProps = {
     embedded?: string;
     onboarding?: string;
     installed?: string;
+    connected?: string;
   }>;
 };
 
 /**
  * Embedded app home / post-install onboarding dashboard.
  *
+ * - Store installed but no brandKey → BrandConnectScreen (signup/login)
+ * - brandKey already set (e.g. Link Flow Setup install) → normal dashboard
+ *
  * Auth for API calls (in order):
  * 1. App Bridge session token via shopify.idToken() (App Store requirement)
  * 2. Short-lived server action token as fallback when not in Admin
- *
- * Third-party cookies are unreliable in the Admin iframe — do not rely on them.
  */
 export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
@@ -30,6 +32,7 @@ export default async function Home({ searchParams }: HomeProps) {
     params.onboarding === "1" ||
     params.installed === "1" ||
     (data.store?.status === "ACTIVE" && data.sales.totalCount === 0);
+  const justConnected = params.connected === "1";
 
   // Fallback only — preferred auth is App Bridge session tokens on the client
   let actionToken: string | null = null;
@@ -48,6 +51,7 @@ export default async function Home({ searchParams }: HomeProps) {
           data={data}
           showOnboarding={showOnboarding}
           actionToken={actionToken}
+          justConnected={justConnected}
         />
       </div>
     </PolarisProvider>

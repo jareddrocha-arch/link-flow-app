@@ -83,9 +83,18 @@ function mapSale(s: Sale): DashboardSale {
 export async function loadMerchantDashboard(
   shopParam?: string | null,
 ): Promise<MerchantDashboardData> {
-  const linkFlowDashboardUrl =
-    process.env.LINK_FLOW_DASHBOARD_URL?.trim() ||
-    "https://www.linkflowaffiliates.com/brand/setup";
+  const linkFlowDashboardUrl = (() => {
+    const configured = process.env.LINK_FLOW_DASHBOARD_URL?.trim();
+    if (configured) {
+      try {
+        const u = new URL(configured);
+        return `${u.origin}/brand/dashboard`;
+      } catch {
+        return configured;
+      }
+    }
+    return "https://www.linkflowaffiliates.com/brand/dashboard";
+  })();
 
   const shop =
     normalizeShop(shopParam || "") || (await shopFromSessionCookie());

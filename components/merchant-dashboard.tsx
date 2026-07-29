@@ -28,6 +28,7 @@ import {
   ClipboardIcon,
 } from "@shopify/polaris-icons";
 import type { MerchantDashboardData } from "@/lib/dashboard";
+import { BrandConnectScreen } from "@/components/brand-connect-screen";
 
 type Props = {
   data: MerchantDashboardData;
@@ -37,6 +38,8 @@ type Props = {
    * are unavailable (e.g. standalone open). Prefer shopify.idToken().
    */
   actionToken?: string | null;
+  /** Just finished brand connect from App Store install path */
+  justConnected?: boolean;
 };
 
 /** App Bridge session token (preferred) or server-issued action token. */
@@ -92,6 +95,7 @@ export function MerchantDashboard({
   data,
   showOnboarding = false,
   actionToken = null,
+  justConnected = false,
 }: Props) {
   const [copied, setCopied] = useState<"brand" | "script" | null>(null);
   const [brandKeyInput, setBrandKeyInput] = useState(
@@ -349,6 +353,19 @@ export function MerchantDashboard({
     );
   }
 
+  // App Store install path: store is active but no brand key yet
+  if (!store.brandKey?.trim() && data.shop) {
+    return (
+      <BrandConnectScreen
+        shop={data.shop}
+        actionToken={actionToken}
+        onConnected={() => {
+          window.location.href = `/?shop=${encodeURIComponent(data.shop!)}&connected=1`;
+        }}
+      />
+    );
+  }
+
   const salesRows = data.sales.recent.map((s) => [
     s.orderId || "—",
     s.amount,
@@ -363,7 +380,7 @@ export function MerchantDashboard({
       title="Link Flow Affiliates"
       subtitle={store.name}
       primaryAction={{
-        content: "Open Link Flow",
+        content: "Open full Brand Dashboard",
         url: data.linkFlowDashboardUrl,
         external: true,
         icon: ExternalIcon,
@@ -378,7 +395,17 @@ export function MerchantDashboard({
       ]}
     >
       <BlockStack gap="400">
-        {showOnboarding || data.sales.totalCount === 0 ? (
+        {justConnected ? (
+          <Banner title="Brand connected" tone="success">
+            <p>
+              Your brand key is locked to this store and tracking was
+              provisioned. Open the full Link Flow dashboard to manage products
+              and affiliates.
+            </p>
+          </Banner>
+        ) : null}
+
+        {showOnboarding || data.sales.totalCount === 0 || justConnected ? (
           <Banner
             title={
               trackingActive
@@ -389,8 +416,8 @@ export function MerchantDashboard({
           >
             <p>
               {trackingActive
-                ? "Sales from your store will be recorded automatically. Confirm your brand key below, then place a test order when you’re ready."
-                : "We’ll help you confirm your brand key and make sure tracking is running on your store."}
+                ? "Sales from your store will be recorded automatically. Place a test order when you’re ready, or open the full brand dashboard."
+                : "Confirm tracking status below. If something is missing, use Refresh tracking."}
             </p>
           </Banner>
         ) : null}
@@ -446,7 +473,7 @@ export function MerchantDashboard({
                 </List>
                 <InlineStack gap="200">
                   <Button url={data.linkFlowDashboardUrl} external>
-                    Open Link Flow dashboard
+                    Open full Brand Dashboard
                   </Button>
                   {!trackingActive ? (
                     <Button
