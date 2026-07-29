@@ -71,20 +71,39 @@ export async function handleComplianceWebhook(options: {
   }
 
   if (topic === "customers/redact") {
-    // Nothing customer-PII to delete. Optionally we could redact order rows
-    // tied only by order id if provided — we keep amounts for merchant books
-    // unless shop/redact runs.
+    // We store no customer contact PII. If Shopify lists order IDs to redact,
+    // remove matching sale rows for this shop so order linkage is gone too.
+    const ordersToRedact = (body.orders_to_redact ?? []).map(String).filter(Boolean);
+    let salesRedacted = 0;
+    if (ordersToRedact.length > 0) {
+      try {
+        const store = await prisma.store.findUnique({ where: { shop } });
+        if (store) {
+          const result = await prisma.sale.deleteMany({
+            where: {
+              storeId: store.id,
+              orderId: { in: ordersToRedact },
+            },
+          });
+          salesRedacted = result.count;
+        }
+      } catch (e) {
+        console.error("[compliance] customers/redact sale cleanup failed", e);
+      }
+    }
+
     const detail = {
       shop,
       customerId: body.customer?.id ?? body.customer_id ?? null,
-      ordersToRedact: body.orders_to_redact ?? [],
-      note: "No customer PII on file. No customer identity fields to redact.",
+      ordersToRedact,
+      salesRedacted,
+      note: "No customer name/email/address/phone stored. Matching order-id sale rows redacted when provided.",
     };
     await logComplianceEvent("CUSTOMERS_REDACT", shop, detail);
     console.info("[compliance] customers/redact", detail);
     return {
       ok: true,
-      detail: "acknowledged_customer_redact_no_pii",
+      detail: `acknowledged_customer_redact_sales=${salesRedacted}`,
     };
   }
 

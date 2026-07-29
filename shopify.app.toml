@@ -13,7 +13,10 @@ automatically_update_urls_on_dev = false
 
 [access_scopes]
 # write_pixels + read_customer_events required for Web Pixel activation
-scopes = "read_products,read_orders,write_script_tags,write_pixels,read_customer_events"
+# Minimal scopes: pixels + script tags for tracking; read_orders only for optional
+# order webhook backup (IDs/amounts — no customer contact fields stored).
+# We do not request read_customers or other customer PII scopes.
+scopes = "read_orders,write_script_tags,write_pixels,read_customer_events"
 # Shopify managed install (omit or false). Custom OAuth still works for brand-key installs.
 use_legacy_install_flow = false
 

@@ -1,16 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  debugUnauthorizedResponse,
+  isDebugAuthorized,
+} from "@/lib/debug-auth";
 import { getOAuthRedirectUri, resolveAppUrl } from "@/lib/shopify";
 
 /**
- * Temporary helper: shows the exact redirect_uri this deployment will send to Shopify.
- * Open: https://YOUR_DOMAIN/api/debug/oauth-config
- * Remove or protect this route once install works.
+ * Debug helper: shows the exact redirect_uri this deployment will send to Shopify.
+ *
+ * Production: GET /api/debug/oauth-config?key=DEBUG_SECRET
+ * Local dev: open without a key.
  */
 export async function GET(request: NextRequest) {
+  if (!isDebugAuthorized(request)) {
+    const { body, status } = debugUnauthorizedResponse();
+    return NextResponse.json(body, { status });
+  }
+
   const appUrl = resolveAppUrl(request.url);
   const redirectUri = getOAuthRedirectUri(request.url);
 
   return NextResponse.json({
+    ok: true,
     appUrl,
     redirectUri,
     whitelistThisExactUrl: redirectUri,

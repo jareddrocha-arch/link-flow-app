@@ -9,6 +9,8 @@ import {
   FormLayout,
   InlineStack,
   Layout,
+  Link,
+  List,
   Page,
   Text,
   TextField,
@@ -25,6 +27,9 @@ type Props = {
 /**
  * App Store install path when the shop has no brandKey yet.
  * Create a Link Flow brand or log in; then the parent reloads the dashboard.
+ *
+ * Shopify App Store: external account is required — disclosed clearly here
+ * and should also be stated in the Partner listing.
  */
 export function BrandConnectScreen({
   shop,
@@ -97,12 +102,41 @@ export function BrandConnectScreen({
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
-            <Banner title="Finish setup for this store" tone="info">
-              <p>
-                Create a free Link Flow brand account or log in with an existing
-                one. We’ll generate your brand key, lock it to{" "}
-                <strong>{shop}</strong>, and install tracking automatically.
-              </p>
+            <Banner title="Free Link Flow account required" tone="info">
+              <BlockStack gap="200">
+                <p>
+                  To activate affiliate tracking for <strong>{shop}</strong>,
+                  create a free brand account on Link Flow Affiliates (or log in
+                  if you already have one). This is required so we can issue a
+                  tracking key, attribute sales, and open the full brand
+                  dashboard.
+                </p>
+                <List type="bullet">
+                  <List.Item>Free to create — no card required here</List.Item>
+                  <List.Item>
+                    Your email and password are used for the Link Flow brand
+                    account (not shared with Shopify as customer data)
+                  </List.Item>
+                  <List.Item>
+                    After connect we install tracking automatically on this
+                    store
+                  </List.Item>
+                </List>
+                <Text as="p" variant="bodySm">
+                  Privacy details:{" "}
+                  <Link url="/privacy" removeUnderline>
+                    Privacy policy
+                  </Link>
+                  {" · "}
+                  <Link
+                    url="https://www.linkflowaffiliates.com"
+                    external
+                    removeUnderline
+                  >
+                    linkflowaffiliates.com
+                  </Link>
+                </Text>
+              </BlockStack>
             </Banner>
 
             {error ? (
@@ -123,7 +157,7 @@ export function BrandConnectScreen({
                     onClick={() => setMode("signup")}
                     disabled={busy}
                   >
-                    Create brand account
+                    Create free account
                   </Button>
                   <Button
                     variant={mode === "login" ? "primary" : "secondary"}
@@ -136,7 +170,7 @@ export function BrandConnectScreen({
 
                 <Text as="p" tone="subdued">
                   {mode === "signup"
-                    ? "New to Link Flow? Create a brand account to get a tracking key and open the full dashboard later."
+                    ? "New to Link Flow? Create a free brand account to get a tracking key and open the full dashboard later."
                     : "Already have a brand on linkflowaffiliates.com? Log in to link this store."}
                 </Text>
 
@@ -197,7 +231,8 @@ export function BrandConnectScreen({
 
                 <Text as="p" tone="subdued" variant="bodySm">
                   Product, affiliate, and commission management stays on the
-                  full Link Flow website after you connect.
+                  full Link Flow website after you connect. This embedded app
+                  focuses on install, tracking status, and recent sales.
                 </Text>
               </BlockStack>
             </Card>

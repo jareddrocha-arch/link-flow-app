@@ -119,41 +119,52 @@ export function MerchantDashboard({
   const webPixelOk = data.tracking.webPixel === "ok";
   const trackingActive = scriptOk || webPixelOk || webhooksOk;
 
-  // Detect App Bridge session tokens and handshake with the backend so
-  // Partner Dashboard "Embedded app checks" observe session-token auth.
+  // Session-token handshake:
+  // - Partner "Embedded app checks" observe Bearer auth
+  // - When SSR could not authorize (no id_token/cookie yet), verify then reload
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const token = await resolveAuthBearer(actionToken);
       if (!cancelled) setCanAuth(Boolean(token));
 
-      // Prefer a real App Bridge JWT (not the fallback action token)
       try {
         if (
-          typeof window !== "undefined" &&
-          window.shopify?.idToken &&
-          data.shop
+          typeof window === "undefined" ||
+          !window.shopify?.idToken ||
+          !data.shop
         ) {
-          const sessionToken = await window.shopify.idToken();
-          if (!sessionToken || cancelled) return;
-          await fetch("/api/session/verify", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${sessionToken}`,
-            },
-            credentials: "include",
-            body: JSON.stringify({ shop: data.shop }),
-          });
+          return;
+        }
+        const sessionToken = await window.shopify.idToken();
+        if (!sessionToken || cancelled) return;
+
+        const res = await fetch("/api/session/verify", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionToken}`,
+          },
+          credentials: "include",
+          body: JSON.stringify({ shop: data.shop }),
+        });
+
+        // SSR blocked merchant data until a session cookie exists — reload once
+        if (res.ok && data.authRequired && !cancelled) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("shop", data.shop);
+          // Drop one-time tokens from the bar; cookie + App Bridge cover re-entry
+          url.searchParams.delete("id_token");
+          window.location.replace(url.toString());
         }
       } catch {
-        /* standalone / App Bridge not ready — action token still works */
+        /* standalone / App Bridge not ready — action token still works when issued */
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [actionToken, data.shop]);
+  }, [actionToken, data.shop, data.authRequired]);
 
   const authHeaders = useCallback(async (): Promise<HeadersInit> => {
     const h: Record<string, string> = {
@@ -322,6 +333,50 @@ export function MerchantDashboard({
     return steps;
   }, [store?.brandKey, trackingActive, data.sales.totalCount]);
 
+  // Unauthorized bare ?shop= open — never show brand keys or sales
+  if (data.authRequired) {
+    return (
+      <Page title="Link Flow Affiliates">
+        <Layout>
+          <Layout.Section>
+            <BlockStack gap="400">
+              <Banner title="Open this app from Shopify Admin" tone="info">
+                <p>
+                  For security, merchant data is only available inside Shopify
+                  Admin (session token). If you just installed the app, wait a
+                  moment — we are authenticating with Shopify
+                  {data.shop ? ` for ${data.shop}` : ""}.
+                </p>
+              </Banner>
+              <Card>
+                <EmptyState
+                  heading="Authenticating your session"
+                  action={{
+                    content: "Install or reinstall",
+                    url: data.shop
+                      ? `/api/auth?shop=${encodeURIComponent(data.shop)}`
+                      : "/auth/login",
+                  }}
+                  secondaryAction={{
+                    content: "Privacy policy",
+                    url: "/privacy",
+                  }}
+                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                >
+                  <p>
+                    Open <strong>Apps → Link Flow Affiliates</strong> from your
+                    store admin. Do not bookmark a bare app URL with only a shop
+                    parameter.
+                  </p>
+                </EmptyState>
+              </Card>
+            </BlockStack>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
+
   if (data.needsInstall || !store) {
     return (
       <Page title="Link Flow Affiliates">
@@ -344,7 +399,9 @@ export function MerchantDashboard({
               >
                 <p>
                   Install once — we set up order tracking automatically so
-                  affiliate sales can be attributed without extra copy-paste.
+                  affiliate sales can be attributed without extra copy-paste. A
+                  free Link Flow brand account is required after install to
+                  activate tracking.
                 </p>
               </EmptyState>
             </Card>

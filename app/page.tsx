@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { PolarisProvider } from "@/components/polaris-provider";
 import { MerchantDashboard } from "@/components/merchant-dashboard";
 import { loadMerchantDashboard } from "@/lib/dashboard";
@@ -21,22 +22,39 @@ type HomeProps = {
  * - Store installed but no brandKey → BrandConnectScreen (signup/login)
  * - brandKey already set (e.g. Link Flow Setup install) → normal dashboard
  *
+ * Merchant data is only loaded when authorized (session JWT or signed cookie).
+ * Action tokens are only issued after that gate passes.
+ *
  * Auth for API calls (in order):
  * 1. App Bridge session token via shopify.idToken() (App Store requirement)
  * 2. Short-lived server action token as fallback when not in Admin
  */
 export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
-  const data = await loadMerchantDashboard(params.shop);
+  const headerList = await headers();
+  const host = headerList.get("x-forwarded-host") || headerList.get("host");
+  const proto = headerList.get("x-forwarded-proto") || "https";
+  const requestUrl = host ? `${proto}://${host}` : undefined;
+
+  const data = await loadMerchantDashboard({
+    shop: params.shop,
+    idToken: params.id_token,
+    requestUrl,
+  });
+
   const showOnboarding =
     params.onboarding === "1" ||
     params.installed === "1" ||
     (data.store?.status === "ACTIVE" && data.sales.totalCount === 0);
   const justConnected = params.connected === "1";
 
-  // Fallback only — preferred auth is App Bridge session tokens on the client
+  // Only issue action tokens when the viewer is authorized for this shop
   let actionToken: string | null = null;
-  if (data.shop && data.store?.status === "ACTIVE") {
+  if (
+    !data.authRequired &&
+    data.shop &&
+    data.store?.status === "ACTIVE"
+  ) {
     try {
       actionToken = createShopActionToken(data.shop);
     } catch {

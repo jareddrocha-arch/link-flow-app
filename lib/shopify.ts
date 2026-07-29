@@ -111,7 +111,6 @@ export function getShopify(requestUrl?: string | URL): Shopify {
   const { hostName, hostScheme } = parseHost(appUrl);
 
   const required = [
-    "read_products",
     "read_orders",
     "write_script_tags",
     "write_pixels",

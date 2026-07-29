@@ -23,9 +23,14 @@ function getCredentials() {
   return { apiKey, apiSecret };
 }
 
-/** Always request pixel scopes even if Vercel SCOPES env is outdated. */
+/**
+ * Minimal scopes for App Store review.
+ * - write_pixels + read_customer_events: Web Pixel (primary conversion path)
+ * - write_script_tags: storefront first-click ScriptTag
+ * - read_orders: optional orders/paid|create webhook backup (order id/amount only)
+ * Product names come from pixel/webhook payloads — we do not need read_products.
+ */
 const REQUIRED_SCOPES = [
-  "read_products",
   "read_orders",
   "write_script_tags",
   "write_pixels",

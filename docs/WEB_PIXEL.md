@@ -86,7 +86,7 @@ Client ID in `shopify.app.toml` must match the installed app (`83757e483b8c48497
 Then ensure Vercel scopes include:
 
 ```env
-SCOPES=read_products,read_orders,write_script_tags,write_pixels,read_customer_events
+SCOPES=read_orders,write_script_tags,write_pixels,read_customer_events
 ```
 
 ## Activation (automatic after install)

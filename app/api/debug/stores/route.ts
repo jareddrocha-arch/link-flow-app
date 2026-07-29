@@ -1,41 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  debugUnauthorizedResponse,
+  isDebugAuthorized,
+} from "@/lib/debug-auth";
 import { prisma } from "@/lib/prisma";
 
 /**
- * List installed stores (tokens redacted).
+ * List installed stores (tokens and brand keys redacted).
  *
  * Local dev: open /api/debug/stores
- * Production: set DEBUG_SECRET on Vercel, then:
- *   /api/debug/stores?key=YOUR_DEBUG_SECRET
- *
- * Prefer /api/health for a simple no-auth check.
+ * Production: /api/debug/stores?key=YOUR_DEBUG_SECRET
  */
 export async function GET(request: NextRequest) {
-  if (process.env.NODE_ENV === "production") {
-    const expected = process.env.DEBUG_SECRET?.trim();
-    const key = request.nextUrl.searchParams.get("key")?.trim();
-
-    if (!expected) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "DEBUG_SECRET is not set on this deployment",
-          hint: "Add DEBUG_SECRET in Vercel env vars, redeploy, then call /api/debug/stores?key=YOUR_SECRET. Or use GET /api/health (no key).",
-        },
-        { status: 401 },
-      );
-    }
-
-    if (key !== expected) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Invalid or missing key",
-          hint: "Use /api/debug/stores?key=YOUR_DEBUG_SECRET (must match Vercel DEBUG_SECRET).",
-        },
-        { status: 401 },
-      );
-    }
+  if (!isDebugAuthorized(request)) {
+    const { body, status } = debugUnauthorizedResponse();
+    return NextResponse.json(body, { status });
   }
 
   try {
@@ -62,7 +41,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       count: stores.length,
-      stores,
+      stores: stores.map((s) => ({
+        id: s.id,
+        shop: s.shop,
+        scopes: s.scopes,
+        name: s.name,
+        // Never expose raw brand keys over debug HTTP
+        hasBrandKey: Boolean(s.brandKey?.trim()),
+        status: s.status,
+        installedAt: s.installedAt,
+        tokenUpdatedAt: s.tokenUpdatedAt,
+        uninstalledAt: s.uninstalledAt,
+        createdAt: s.createdAt,
+        _count: s._count,
+      })),
     });
   } catch (error) {
     console.error("[debug/stores]", error);

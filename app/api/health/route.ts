@@ -1,20 +1,45 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  debugUnauthorizedResponse,
+  isDebugAuthorized,
+} from "@/lib/debug-auth";
 import { prisma } from "@/lib/prisma";
 
 /**
- * Public health check — confirms DB connectivity and table presence.
- * Does not expose access tokens or secrets.
+ * Health check.
  *
- * GET /api/health
+ * Public (no secrets): connectivity only — ok + database status.
+ * Detailed store inventory: production requires DEBUG_SECRET
+ *   GET /api/health?key=YOUR_DEBUG_SECRET&details=1
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const wantDetails =
+    request.nextUrl.searchParams.get("details") === "1" ||
+    request.nextUrl.searchParams.get("details") === "true";
+
   try {
+    // Lightweight connectivity probe (no merchant data)
+    await prisma.$queryRaw`SELECT 1`;
+
+    if (!wantDetails) {
+      return NextResponse.json({
+        ok: true,
+        database: "connected",
+      });
+    }
+
+    // Detailed diagnostics are not public in production
+    if (!isDebugAuthorized(request)) {
+      const { body, status } = debugUnauthorizedResponse();
+      return NextResponse.json(body, { status });
+    }
+
     const tables = await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
     );
 
     const storeCount = await prisma.store.count();
-    const latest = await prisma.store.findMany({
+    const latestRaw = await prisma.store.findMany({
       take: 5,
       orderBy: { installedAt: "desc" },
       select: {
@@ -32,8 +57,14 @@ export async function GET() {
       schema: "public",
       tables: tables.map((t) => t.tablename),
       storeCount,
-      latestStores: latest,
-      tip: "In Supabase Table Editor, open schema public and look for capitalized tables: Store, Affiliate, Sale, Click, Payout.",
+      // Never return raw brand keys — only whether one is set
+      latestStores: latestRaw.map((s) => ({
+        shop: s.shop,
+        status: s.status,
+        hasBrandKey: Boolean(s.brandKey?.trim()),
+        installedAt: s.installedAt,
+        scopes: s.scopes,
+      })),
     });
   } catch (error) {
     console.error("[health]", error);
@@ -41,8 +72,12 @@ export async function GET() {
       {
         ok: false,
         database: "error",
-        error: error instanceof Error ? error.message : "Unknown database error",
-        tip: "Check DATABASE_URL on Vercel (pooler :6543 with pgbouncer=true). Tables are created by local `npx prisma db push`, not by Vercel redeploy.",
+        error:
+          process.env.NODE_ENV === "production"
+            ? "Database unavailable"
+            : error instanceof Error
+              ? error.message
+              : "Unknown database error",
       },
       { status: 500 },
     );

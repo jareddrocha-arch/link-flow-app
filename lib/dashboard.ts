@@ -1,21 +1,16 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import {
+  decodeSession,
+  SHOP_SESSION_COOKIE,
+} from "@/lib/shop-session";
+import {
+  isShopifySessionTokenForShop,
+  verifyShopifySessionToken,
+} from "@/lib/session-token";
 import { getStoreByShop, normalizeShop } from "@/lib/stores";
 import { getTrackingScriptUrl } from "@/lib/tracking-url";
 import type { Sale, Store } from "@prisma/client";
-
-/** Decode shop from signed session cookie. */
-async function shopFromSessionCookie(): Promise<string | null> {
-  try {
-    const { decodeSession, SHOP_SESSION_COOKIE: name } = await import(
-      "@/lib/shop-session"
-    );
-    const raw = (await cookies()).get(name)?.value;
-    return decodeSession(raw);
-  } catch {
-    return null;
-  }
-}
 
 export type DashboardSale = {
   id: string;
@@ -30,6 +25,8 @@ export type DashboardSale = {
 
 export type MerchantDashboardData = {
   shop: string | null;
+  /** True when shop is known but caller is not authorized to see merchant data */
+  authRequired: boolean;
   store: {
     id: string;
     shop: string;
@@ -80,39 +77,145 @@ function mapSale(s: Sale): DashboardSale {
   };
 }
 
-export async function loadMerchantDashboard(
-  shopParam?: string | null,
-): Promise<MerchantDashboardData> {
-  const linkFlowDashboardUrl = (() => {
-    const configured = process.env.LINK_FLOW_DASHBOARD_URL?.trim();
-    if (configured) {
-      try {
-        const u = new URL(configured);
-        return `${u.origin}/brand/dashboard`;
-      } catch {
-        return configured;
-      }
-    }
-    return "https://www.linkflowaffiliates.com/brand/dashboard";
-  })();
+function emptyDashboard(
+  partial: Partial<MerchantDashboardData> & {
+    linkFlowDashboardUrl: string;
+  },
+): MerchantDashboardData {
+  return {
+    shop: null,
+    authRequired: false,
+    store: null,
+    trackingScriptUrl: null,
+    tracking: {
+      scriptTag: "unknown",
+      webhooks: "unknown",
+      webPixel: "unknown",
+    },
+    sales: { totalCount: 0, totalAmount: money(0), recent: [] },
+    needsInstall: true,
+    ...partial,
+  };
+}
 
-  const shop =
-    normalizeShop(shopParam || "") || (await shopFromSessionCookie());
+function linkFlowDashboardUrl(): string {
+  const configured = process.env.LINK_FLOW_DASHBOARD_URL?.trim();
+  if (configured) {
+    try {
+      const u = new URL(configured);
+      return `${u.origin}/brand/dashboard`;
+    } catch {
+      return configured;
+    }
+  }
+  return "https://www.linkflowaffiliates.com/brand/dashboard";
+}
+
+/**
+ * Resolve shop + whether the request is allowed to see merchant data.
+ *
+ * Production allows sensitive data only when:
+ * 1. Valid Shopify session JWT (`id_token` query) for that shop, or
+ * 2. Signed `lf_shop_session` cookie for that shop
+ *
+ * Bare `?shop=` without either is not enough (prevents scraping sales/brand keys).
+ * Local development still allows shop param for easier testing.
+ */
+async function resolveDashboardAuth(options: {
+  shopParam?: string | null;
+  idToken?: string | null;
+  requestUrl?: string;
+}): Promise<{ shop: string | null; authorized: boolean }> {
+  const shopFromParam = normalizeShop(options.shopParam || "");
+  const idToken = options.idToken?.trim() || null;
+  const isDev = process.env.NODE_ENV !== "production";
+
+  // 1) App Bridge / Admin document load: id_token JWT
+  if (idToken) {
+    const verified = await verifyShopifySessionToken(
+      idToken,
+      options.requestUrl,
+    );
+    if (verified?.shop) {
+      if (shopFromParam && shopFromParam !== verified.shop) {
+        return { shop: shopFromParam, authorized: false };
+      }
+      return { shop: verified.shop, authorized: true };
+    }
+  }
+
+  // 2) Signed first-party / SameSite=None session cookie
+  let cookieShop: string | null = null;
+  try {
+    const raw = (await cookies()).get(SHOP_SESSION_COOKIE)?.value;
+    cookieShop = decodeSession(raw);
+  } catch {
+    cookieShop = null;
+  }
+
+  if (cookieShop) {
+    if (shopFromParam && shopFromParam !== cookieShop) {
+      return { shop: shopFromParam, authorized: false };
+    }
+    return { shop: cookieShop, authorized: true };
+  }
+
+  // 3) Dev convenience: allow ?shop= without token
+  if (isDev && shopFromParam) {
+    return { shop: shopFromParam, authorized: true };
+  }
+
+  // 4) Shop known from query but not authenticated
+  if (shopFromParam) {
+    return { shop: shopFromParam, authorized: false };
+  }
+
+  return { shop: null, authorized: false };
+}
+
+export type LoadMerchantDashboardOptions = {
+  shop?: string | null;
+  idToken?: string | null;
+  /** Used for session token audience / host checks when available */
+  requestUrl?: string;
+};
+
+export async function loadMerchantDashboard(
+  shopParamOrOptions?: string | null | LoadMerchantDashboardOptions,
+): Promise<MerchantDashboardData> {
+  const options: LoadMerchantDashboardOptions =
+    shopParamOrOptions != null && typeof shopParamOrOptions === "object"
+      ? shopParamOrOptions
+      : { shop: shopParamOrOptions as string | null | undefined };
+
+  const dashUrl = linkFlowDashboardUrl();
+  const { shop, authorized } = await resolveDashboardAuth({
+    shopParam: options.shop,
+    idToken: options.idToken,
+    requestUrl: options.requestUrl,
+  });
 
   if (!shop) {
-    return {
-      shop: null,
-      store: null,
-      trackingScriptUrl: null,
+    return emptyDashboard({
+      linkFlowDashboardUrl: dashUrl,
+      needsInstall: true,
+      authRequired: false,
+    });
+  }
+
+  // Known shop but no session — do not load or return merchant secrets
+  if (!authorized) {
+    return emptyDashboard({
+      shop,
+      linkFlowDashboardUrl: dashUrl,
+      needsInstall: false,
+      authRequired: true,
       tracking: {
         scriptTag: "unknown",
         webhooks: "unknown",
         webPixel: "unknown",
       },
-      sales: { totalCount: 0, totalAmount: money(0), recent: [] },
-      linkFlowDashboardUrl,
-      needsInstall: true,
-    };
+    });
   }
 
   let store: Store | null = null;
@@ -123,19 +226,17 @@ export async function loadMerchantDashboard(
   }
 
   if (!store) {
-    return {
+    return emptyDashboard({
       shop,
-      store: null,
-      trackingScriptUrl: null,
+      linkFlowDashboardUrl: dashUrl,
+      needsInstall: true,
+      authRequired: false,
       tracking: {
         scriptTag: "missing",
         webhooks: "missing",
         webPixel: "missing",
       },
-      sales: { totalCount: 0, totalAmount: money(0), recent: [] },
-      linkFlowDashboardUrl,
-      needsInstall: true,
-    };
+    });
   }
 
   const [totalCount, amountAgg, recent] = await Promise.all([
@@ -158,6 +259,7 @@ export async function loadMerchantDashboard(
 
   return {
     shop: store.shop,
+    authRequired: false,
     store: {
       id: store.id,
       shop: store.shop,
@@ -183,7 +285,19 @@ export async function loadMerchantDashboard(
       totalAmount: money(totalAmount),
       recent: recent.map(mapSale),
     },
-    linkFlowDashboardUrl,
+    linkFlowDashboardUrl: dashUrl,
     needsInstall: store.status !== "ACTIVE",
   };
+}
+
+/**
+ * True when a Shopify session JWT is valid for the given shop.
+ * Used by page-level helpers when re-checking after client handshake.
+ */
+export async function isSessionTokenForShop(
+  token: string | null | undefined,
+  shop: string,
+  requestUrl?: string,
+): Promise<boolean> {
+  return isShopifySessionTokenForShop(token, shop, requestUrl);
 }

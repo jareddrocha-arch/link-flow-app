@@ -11,7 +11,7 @@ const SUPPORT_EMAIL =
   process.env.PRIVACY_CONTACT_EMAIL?.trim() ||
   "support@linkflowaffiliates.com";
 
-const LAST_UPDATED = "July 23, 2026";
+const LAST_UPDATED = "July 29, 2026";
 
 /** Force light legal-page styling regardless of system dark mode */
 const pageStyle: React.CSSProperties = {
@@ -140,6 +140,20 @@ export default function PrivacyPolicyPage() {
                 Technical install data such as your app access token, tracking
                 brand key, and whether scripts or webhooks are installed
               </li>
+              <li style={liStyle}>
+                <strong>Brand account data</strong> (when you create or log in
+                to a free Link Flow brand account from the app): brand name,
+                email, and password — handled by the Link Flow platform at{" "}
+                <a
+                  style={linkStyle}
+                  href="https://www.linkflowaffiliates.com"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  linkflowaffiliates.com
+                </a>{" "}
+                so we can issue a tracking key and run commissions
+              </li>
             </ul>
           </section>
 
@@ -159,7 +173,21 @@ export default function PrivacyPolicyPage() {
             </ul>
             <p style={{ marginTop: "0.75rem", marginBottom: 0 }}>
               Our tracking focuses on order and referral data for
-              commissions—not on building customer profiles.
+              commissions—not on building customer profiles. We may receive
+              order IDs and amounts via Shopify order webhooks or the web pixel;
+              we do <strong>not</strong> store customer identity fields from
+              those payloads even if Shopify includes them.
+            </p>
+          </section>
+
+          <section style={sectionStyle}>
+            <h2 style={h2Style}>How merchants access the app</h2>
+            <p style={{ marginTop: "0.5rem", marginBottom: 0 }}>
+              The embedded app is meant to be opened from{" "}
+              <strong>Shopify Admin</strong>. We authenticate merchant sessions
+              with Shopify session tokens (and a short-lived signed cookie after
+              verification). We do not expose sales history or brand keys on
+              public URLs that only include a shop domain.
             </p>
           </section>
 
