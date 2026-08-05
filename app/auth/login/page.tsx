@@ -3,6 +3,7 @@
 import { FormEvent, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { startTopLevelOAuth } from "@/lib/oauth-client";
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -23,10 +24,11 @@ function LoginForm() {
       normalized = `${normalized}.myshopify.com`;
     }
 
-    const url = new URL("/api/auth", window.location.origin);
-    url.searchParams.set("shop", normalized);
-    if (brandKey) url.searchParams.set("brandKey", brandKey);
-    window.location.href = url.toString();
+    // Always top-level so authorize is not framed (Admin / review)
+    startTopLevelOAuth({
+      shop: normalized,
+      brandKey: brandKey || null,
+    });
   };
 
   const errorMessage =

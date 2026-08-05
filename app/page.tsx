@@ -13,6 +13,8 @@ type HomeProps = {
     onboarding?: string;
     installed?: string;
     connected?: string;
+    brandKey?: string;
+    brand_key?: string;
   }>;
 };
 
@@ -70,6 +72,9 @@ export default async function Home({ searchParams }: HomeProps) {
           showOnboarding={showOnboarding}
           actionToken={actionToken}
           justConnected={justConnected}
+          brandKeyFromQuery={
+            params.brandKey?.trim() || params.brand_key?.trim() || null
+          }
         />
       </div>
     </PolarisProvider>

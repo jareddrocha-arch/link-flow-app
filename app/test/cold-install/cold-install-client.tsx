@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import Link from "next/link";
+import { startTopLevelOAuth } from "@/lib/oauth-client";
 
 type Props = {
   debugKey?: string;
@@ -28,11 +29,8 @@ export function ColdInstallClient({ debugKey, appOriginHint }: Props) {
       normalized = `${normalized}.myshopify.com`;
     }
 
-    // Intentionally omit brandKey — App Store cold install
-    const url = new URL("/api/auth", window.location.origin);
-    url.searchParams.set("shop", normalized);
-    url.searchParams.set("cold", "1");
-    window.location.href = url.toString();
+    // Top-level cold OAuth (no brandKey)
+    startTopLevelOAuth({ shop: normalized, cold: true });
   };
 
   const origin =

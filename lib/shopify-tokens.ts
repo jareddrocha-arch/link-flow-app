@@ -90,6 +90,57 @@ export async function exchangeAuthorizationCode(options: {
 }
 
 /**
+ * Managed install / App Bridge path: exchange a session token (id_token)
+ * for an **expiring offline** Admin API access token.
+ *
+ * Used when Shopify opens the app after Install without sending a `code`
+ * through our OAuth callback (managed installation). Completes install
+ * without a second authorize hop that fails inside the Admin iframe.
+ *
+ * @see https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/token-exchange
+ */
+export async function exchangeSessionTokenForOfflineAccess(options: {
+  shop: string;
+  sessionToken: string;
+}): Promise<TokenResponse> {
+  const { clientId, clientSecret } = getCredentials();
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+    subject_token: options.sessionToken,
+    subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+    requested_token_type:
+      "urn:shopify:params:oauth:token-type:offline-access-token",
+    expiring: "1",
+  });
+
+  const res = await fetch(
+    `https://${options.shop}/admin/oauth/access_token`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body,
+    },
+  );
+  const json = (await res.json()) as TokenResponse;
+  if (!res.ok) {
+    throw new Error(
+      json.error_description ||
+        json.error ||
+        `Session token exchange failed (${res.status})`,
+    );
+  }
+  if (!json.access_token) {
+    throw new Error("Session token exchange returned no access_token");
+  }
+  return json;
+}
+
+/**
  * Refresh an expiring offline access token.
  */
 export async function refreshOfflineToken(options: {

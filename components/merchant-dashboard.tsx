@@ -30,6 +30,14 @@ import {
 import type { MerchantDashboardData } from "@/lib/dashboard";
 import { BrandConnectScreen } from "@/components/brand-connect-screen";
 import { CopyEmailLink } from "@/components/copy-email-link";
+import {
+  bootstrapFromSessionToken,
+  buildOAuthBeginUrl,
+  isEmbeddedAdminOpen,
+  navigateTopLevel,
+  reloadAppHome,
+  startTopLevelOAuth,
+} from "@/lib/oauth-client";
 
 type Props = {
   data: MerchantDashboardData;
@@ -41,6 +49,11 @@ type Props = {
   actionToken?: string | null;
   /** Just finished brand connect from App Store install path */
   justConnected?: boolean;
+  /**
+   * Optional brand key from Link Flow warm install URL (preserved for
+   * bootstrap / OAuth — not shown when re-installing via managed install).
+   */
+  brandKeyFromQuery?: string | null;
 };
 
 /** App Bridge session token (preferred) or server-issued action token. */
@@ -97,6 +110,7 @@ export function MerchantDashboard({
   showOnboarding = false,
   actionToken = null,
   justConnected = false,
+  brandKeyFromQuery = null,
 }: Props) {
   const [copied, setCopied] = useState<"brand" | "script" | null>(null);
   const [brandKeyInput, setBrandKeyInput] = useState(
@@ -106,6 +120,21 @@ export function MerchantDashboard({
   const [provisioning, setProvisioning] = useState(false);
   /** True once App Bridge idToken is available or we have an action token */
   const [canAuth, setCanAuth] = useState(Boolean(actionToken));
+  /**
+   * Completing managed install / session bootstrap (no second OAuth hop).
+   * "pending" while trying; "failed" only if we must fall back to top-level OAuth.
+   */
+  const [bootstrapState, setBootstrapState] = useState<
+    "idle" | "pending" | "failed"
+  >("idle");
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  /**
+   * After managed-install bootstrap succeeds, prefer showing Brand Connect
+   * in-client (avoids reload loops when third-party cookies are blocked).
+   */
+  const [clientBrandConnectShop, setClientBrandConnectShop] = useState<
+    string | null
+  >(null);
   const [banner, setBanner] = useState<{
     tone: "success" | "warning" | "critical" | "info";
     title: string;
@@ -119,27 +148,96 @@ export function MerchantDashboard({
   const webPixelOk = data.tracking.webPixel === "ok";
   const trackingActive = scriptOk || webPixelOk || webhooksOk;
 
-  // Session-token handshake:
-  // - Partner "Embedded app checks" observe Bearer auth
-  // - When SSR could not authorize (no id_token/cookie yet), verify then reload
+  /**
+   * When Shopify opens the app after Install (managed install or post-OAuth)
+   * we often have App Bridge but SSR has no cookie yet, and/or no Store row.
+   * Bootstrap with session token exchange — do NOT offer in-iframe OAuth.
+   */
   useEffect(() => {
     let cancelled = false;
+    const needsBootstrap =
+      Boolean(data.shop) && (data.authRequired || data.needsInstall || !store);
+
+    if (!needsBootstrap) {
+      setBootstrapState("idle");
+      return;
+    }
+
     (async () => {
-      const token = await resolveAuthBearer(actionToken);
-      if (!cancelled) setCanAuth(Boolean(token));
+      setBootstrapState("pending");
+      setBootstrapError(null);
+
+      // Wait for App Bridge CDN (embedded Admin can take a few seconds)
+      let sessionToken: string | null = null;
+      for (let i = 0; i < 40 && !cancelled; i++) {
+        try {
+          if (typeof window !== "undefined" && window.shopify?.idToken) {
+            sessionToken = await window.shopify.idToken();
+            if (sessionToken) break;
+          }
+        } catch {
+          /* retry */
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      if (cancelled) return;
+
+      if (!sessionToken) {
+        // Embedded Admin without token: retry once more after a beat, then fail soft
+        setBootstrapState("failed");
+        setBootstrapError(
+          isEmbeddedAdminOpen()
+            ? "Shopify Admin session token not ready yet. Use “Retry setup” below (does not open a second Install screen). Only use Install if retry keeps failing."
+            : "Could not get a Shopify session token. Open the app from Shopify Admin, or use Install (full browser window).",
+        );
+        return;
+      }
+
+      if (!cancelled) setCanAuth(true);
 
       try {
-        if (
-          typeof window === "undefined" ||
-          !window.shopify?.idToken ||
-          !data.shop
-        ) {
+        const result = await bootstrapFromSessionToken({
+          shop: data.shop!,
+          sessionToken,
+          brandKey: brandKeyFromQuery,
+        });
+
+        if (cancelled) return;
+
+        if (result.ok && result.installed) {
+          const shopReady = result.shop || data.shop!;
+          // Cold install / no brand yet → stay in-app (Brand Connect). No OAuth.
+          if (result.needsBrandConnect) {
+            setClientBrandConnectShop(shopReady);
+            setBootstrapState("idle");
+            return;
+          }
+          // Brand already linked — reload once so SSR can serve the full dashboard
+          const reloadKey = `lf_dash_reload_${shopReady}`;
+          try {
+            if (
+              typeof sessionStorage !== "undefined" &&
+              !sessionStorage.getItem(reloadKey)
+            ) {
+              sessionStorage.setItem(reloadKey, "1");
+              reloadAppHome(shopReady, { installed: "1" });
+              return;
+            }
+          } catch {
+            reloadAppHome(shopReady, { installed: "1" });
+            return;
+          }
+          // Already reloaded but SSR still blocked — session token APIs still work
+          setBootstrapState("failed");
+          setBootstrapError(
+            "App is installed. If the dashboard does not load, reopen Link Flow from Shopify Admin → Apps.",
+          );
           return;
         }
-        const sessionToken = await window.shopify.idToken();
-        if (!sessionToken || cancelled) return;
 
-        const res = await fetch("/api/session/verify", {
+        // Store already active but SSR lacked cookie: set cookie then reload once
+        const verify = await fetch("/api/session/verify", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -148,23 +246,55 @@ export function MerchantDashboard({
           credentials: "include",
           body: JSON.stringify({ shop: data.shop }),
         });
-
-        // SSR blocked merchant data until a session cookie exists — reload once
-        if (res.ok && data.authRequired && !cancelled) {
-          const url = new URL(window.location.href);
-          url.searchParams.set("shop", data.shop);
-          // Drop one-time tokens from the bar; cookie + App Bridge cover re-entry
-          url.searchParams.delete("id_token");
-          window.location.replace(url.toString());
+        if (verify.ok && !cancelled) {
+          const verifyBody = (await verify.json().catch(() => ({}))) as {
+            installed?: boolean;
+          };
+          if (verifyBody.installed === false) {
+            // verify ok but not installed — fall through to error
+          } else {
+            const reloadKey = `lf_sess_reload_${data.shop}`;
+            try {
+              if (
+                typeof sessionStorage !== "undefined" &&
+                !sessionStorage.getItem(reloadKey)
+              ) {
+                sessionStorage.setItem(reloadKey, "1");
+                reloadAppHome(data.shop!);
+                return;
+              }
+            } catch {
+              reloadAppHome(data.shop!);
+              return;
+            }
+          }
         }
-      } catch {
-        /* standalone / App Bridge not ready — action token still works when issued */
+
+        setBootstrapState("failed");
+        setBootstrapError(
+          result.error ||
+            "Could not finish install from the Admin session. Use Install below to authorize at the top level.",
+        );
+      } catch (e) {
+        if (cancelled) return;
+        setBootstrapState("failed");
+        setBootstrapError(
+          e instanceof Error ? e.message : "Bootstrap request failed",
+        );
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [actionToken, data.shop, data.authRequired]);
+  }, [
+    actionToken,
+    brandKeyFromQuery,
+    data.authRequired,
+    data.needsInstall,
+    data.shop,
+    store,
+  ]);
 
   const authHeaders = useCallback(async (): Promise<HeadersInit> => {
     const h: Record<string, string> = {
@@ -333,78 +463,152 @@ export function MerchantDashboard({
     return steps;
   }, [store?.brandKey, trackingActive, data.sales.totalCount]);
 
-  // Unauthorized bare ?shop= open — never show brand keys or sales
-  if (data.authRequired) {
+  // Managed install finished client-side — brand account still required
+  if (clientBrandConnectShop) {
+    return (
+      <BrandConnectScreen
+        shop={clientBrandConnectShop}
+        actionToken={actionToken}
+        onConnected={() => {
+          try {
+            sessionStorage.removeItem(
+              `lf_dash_reload_${clientBrandConnectShop}`,
+            );
+          } catch {
+            /* ignore */
+          }
+          reloadAppHome(clientBrandConnectShop, { connected: "1" });
+        }}
+      />
+    );
+  }
+
+  // Post-install / embedded open: complete session or managed install quietly.
+  // Do not start a second OAuth inside the iframe (reviewer "refused to connect").
+  if (data.authRequired || data.needsInstall || !store) {
+    const shopLabel = data.shop || "your store";
+    const isPending = bootstrapState === "pending" || bootstrapState === "idle";
+    const showFallback = bootstrapState === "failed" || (!data.shop && !isPending);
+    const oauthHref = data.shop
+      ? buildOAuthBeginUrl({
+          shop: data.shop,
+          brandKey: brandKeyFromQuery,
+          cold: !brandKeyFromQuery,
+        })
+      : "/auth/login";
+
     return (
       <Page title="Link Flow Affiliates">
         <Layout>
           <Layout.Section>
             <BlockStack gap="400">
-              <Banner title="Open this app from Shopify Admin" tone="info">
-                <p>
-                  For security, merchant data is only available inside Shopify
-                  Admin (session token). If you just installed the app, wait a
-                  moment — we are authenticating with Shopify
-                  {data.shop ? ` for ${data.shop}` : ""}.
-                </p>
-              </Banner>
-              <Card>
-                <EmptyState
-                  heading="Authenticating your session"
-                  action={{
-                    content: "Install or reinstall",
-                    url: data.shop
-                      ? `/api/auth?shop=${encodeURIComponent(data.shop)}`
-                      : "/auth/login",
-                  }}
-                  secondaryAction={{
-                    content: "Privacy policy",
-                    url: "/privacy",
-                  }}
-                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+              {isPending ? (
+                <Banner
+                  title={
+                    data.needsInstall || !store
+                      ? "Finishing install"
+                      : "Authenticating with Shopify"
+                  }
+                  tone="info"
                 >
                   <p>
-                    Open <strong>Apps → Link Flow Affiliates</strong> from your
-                    store admin. Do not bookmark a bare app URL with only a shop
-                    parameter.
+                    Completing setup for <strong>{shopLabel}</strong> using your
+                    Shopify Admin session. You should not need to click Install
+                    again — hang tight for a moment.
                   </p>
+                </Banner>
+              ) : null}
+
+              {bootstrapError && bootstrapState === "failed" ? (
+                <Banner title="Could not finish automatically" tone="warning">
+                  <p>{bootstrapError}</p>
+                </Banner>
+              ) : null}
+
+              <Card>
+                <EmptyState
+                  heading={
+                    isPending
+                      ? "Setting up Link Flow…"
+                      : data.shop
+                        ? `Almost done — ${data.shop}`
+                        : "Connect your Shopify store"
+                  }
+                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                >
+                  {isPending ? (
+                    <p>
+                      If you just approved permissions in Shopify, we are
+                      linking this store and will open brand setup or the
+                      dashboard next. Do not click Install again.
+                    </p>
+                  ) : (
+                    <BlockStack gap="300">
+                      <p>
+                        Setup did not finish automatically. Prefer{" "}
+                        <strong>Retry setup</strong> (uses your Admin session —
+                        no second permissions screen). Only use Install if retry
+                        fails — it opens Shopify in the full browser window, not
+                        inside this frame.
+                      </p>
+                      {showFallback && data.shop ? (
+                        <InlineStack gap="300" wrap>
+                          <Button
+                            variant="primary"
+                            onClick={() => {
+                              setBootstrapState("idle");
+                              // Re-run effect by toggling via full reload preserving host
+                              reloadAppHome(data.shop!);
+                            }}
+                          >
+                            Retry setup
+                          </Button>
+                          {/* Native target=_top — never navigates the Admin iframe alone */}
+                          <a
+                            href={oauthHref}
+                            target="_top"
+                            rel="noopener noreferrer"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              startTopLevelOAuth({
+                                shop: data.shop!,
+                                brandKey: brandKeyFromQuery,
+                                cold: !brandKeyFromQuery,
+                              });
+                            }}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              padding: "8px 16px",
+                              borderRadius: 8,
+                              border: "1px solid #8a8a8a",
+                              color: "#202223",
+                              textDecoration: "none",
+                              fontWeight: 600,
+                              fontSize: 14,
+                            }}
+                          >
+                            Install (full window)
+                          </a>
+                        </InlineStack>
+                      ) : showFallback && !data.shop ? (
+                        <Button
+                          variant="primary"
+                          onClick={() => {
+                            navigateTopLevel("/auth/login");
+                          }}
+                        >
+                          Enter store domain
+                        </Button>
+                      ) : null}
+                      <p>
+                        <Link url="/privacy">Privacy policy</Link>
+                      </p>
+                    </BlockStack>
+                  )}
                 </EmptyState>
               </Card>
             </BlockStack>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    );
-  }
-
-  if (data.needsInstall || !store) {
-    return (
-      <Page title="Link Flow Affiliates">
-        <Layout>
-          <Layout.Section>
-            <Card>
-              <EmptyState
-                heading={
-                  data.shop
-                    ? `Connect ${data.shop}`
-                    : "Connect your Shopify store"
-                }
-                action={{
-                  content: "Install Link Flow",
-                  url: data.shop
-                    ? `/api/auth?shop=${encodeURIComponent(data.shop)}`
-                    : "/auth/login",
-                }}
-                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-              >
-                <p>
-                  Install once — we set up order tracking automatically so
-                  affiliate sales can be attributed without extra copy-paste. A
-                  free Link Flow brand account is required after install to
-                  activate tracking.
-                </p>
-              </EmptyState>
-            </Card>
           </Layout.Section>
         </Layout>
       </Page>
