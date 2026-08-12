@@ -11,7 +11,7 @@ const SUPPORT_EMAIL =
   process.env.PRIVACY_CONTACT_EMAIL?.trim() ||
   "support@linkflowaffiliates.com";
 
-const LAST_UPDATED = "July 29, 2026";
+const LAST_UPDATED = "August 11, 2026";
 
 /** Force light legal-page styling regardless of system dark mode */
 const pageStyle: React.CSSProperties = {
@@ -138,21 +138,8 @@ export default function PrivacyPolicyPage() {
               </li>
               <li style={liStyle}>
                 Technical install data such as your app access token, tracking
-                brand key, and whether scripts or webhooks are installed
-              </li>
-              <li style={liStyle}>
-                <strong>Brand account data</strong> (when you create or log in
-                to a free Link Flow brand account from the app): brand name,
-                email, and password — handled by the Link Flow platform at{" "}
-                <a
-                  style={linkStyle}
-                  href="https://www.linkflowaffiliates.com"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  linkflowaffiliates.com
-                </a>{" "}
-                so we can issue a tracking key and run commissions
+                brand key (when provided), and whether scripts or webhooks are
+                installed
               </li>
             </ul>
           </section>
@@ -173,7 +160,7 @@ export default function PrivacyPolicyPage() {
             </ul>
             <p style={{ marginTop: "0.75rem", marginBottom: 0 }}>
               Our tracking focuses on order and referral data for
-              commissions—not on building customer profiles. We may receive
+              attribution—not on building customer profiles. We may receive
               order IDs and amounts via Shopify order webhooks or the web pixel;
               we do <strong>not</strong> store customer identity fields from
               those payloads even if Shopify includes them.
@@ -187,7 +174,9 @@ export default function PrivacyPolicyPage() {
               <strong>Shopify Admin</strong>. We authenticate merchant sessions
               with Shopify session tokens (and a short-lived signed cookie after
               verification). We do not expose sales history or brand keys on
-              public URLs that only include a shop domain.
+              public URLs that only include a shop domain. This app does not
+              charge merchants inside Shopify Admin and does not open external
+              payment or billing pages from the embedded UI.
             </p>
           </section>
 
@@ -202,9 +191,7 @@ export default function PrivacyPolicyPage() {
                 tracking)
               </li>
               <li style={liStyle}>
-                Calculate and support{" "}
-                <strong>tier ranking commissions</strong> and related affiliate
-                payouts
+                Support affiliate attribution reporting for merchants
               </li>
               <li style={liStyle}>
                 Show merchants a simple sales summary inside the Shopify app
@@ -231,7 +218,7 @@ export default function PrivacyPolicyPage() {
             <p style={{ marginTop: "0.5rem", marginBottom: 0 }}>
               In general, we keep order and attribution records for as long as
               your store remains installed and for a reasonable period afterward
-              so commissions and history can still be reviewed.
+              so history can still be reviewed.
             </p>
             <ul style={listStyle}>
               <li style={liStyle}>
@@ -303,17 +290,6 @@ export default function PrivacyPolicyPage() {
               Questions about privacy or data deletion:{" "}
               <a style={linkStyle} href={`mailto:${SUPPORT_EMAIL}`}>
                 {SUPPORT_EMAIL}
-              </a>
-            </p>
-            <p style={{ marginTop: "0.5rem", marginBottom: 0 }}>
-              Website:{" "}
-              <a
-                style={linkStyle}
-                href="https://www.linkflowaffiliates.com"
-                target="_blank"
-                rel="noreferrer"
-              >
-                linkflowaffiliates.com
               </a>
             </p>
           </section>

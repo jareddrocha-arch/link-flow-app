@@ -24,11 +24,9 @@ import {
 import {
   CheckCircleIcon,
   AlertCircleIcon,
-  ExternalIcon,
   ClipboardIcon,
 } from "@shopify/polaris-icons";
 import type { MerchantDashboardData } from "@/lib/dashboard";
-import { BrandConnectScreen } from "@/components/brand-connect-screen";
 import { CopyEmailLink } from "@/components/copy-email-link";
 import {
   bootstrapFromSessionToken,
@@ -47,11 +45,11 @@ type Props = {
    * are unavailable (e.g. standalone open). Prefer shopify.idToken().
    */
   actionToken?: string | null;
-  /** Just finished brand connect from App Store install path */
+  /** Brand key was just saved / provisioned for this store */
   justConnected?: boolean;
   /**
-   * Optional brand key from Link Flow warm install URL (preserved for
-   * bootstrap / OAuth — not shown when re-installing via managed install).
+   * Optional brand key from warm install URL (preserved for bootstrap /
+   * OAuth — applied server-side when present).
    */
   brandKeyFromQuery?: string | null;
 };
@@ -105,6 +103,15 @@ function StatusPill({
   );
 }
 
+/**
+ * Embedded app home for Shopify Admin.
+ *
+ * App Store review constraints:
+ * - No links or CTAs to external websites or dashboards
+ * - No billing / deposits / Stripe / payment UI
+ * - Cold install stays in-app (tracking + optional brand key)
+ * - Warm install still applies brandKey from the install URL server-side
+ */
 export function MerchantDashboard({
   data,
   showOnboarding = false,
@@ -128,13 +135,6 @@ export function MerchantDashboard({
     "idle" | "pending" | "failed"
   >("idle");
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
-  /**
-   * After managed-install bootstrap succeeds, prefer showing Brand Connect
-   * in-client (avoids reload loops when third-party cookies are blocked).
-   */
-  const [clientBrandConnectShop, setClientBrandConnectShop] = useState<
-    string | null
-  >(null);
   const [banner, setBanner] = useState<{
     tone: "success" | "warning" | "critical" | "info";
     title: string;
@@ -184,7 +184,6 @@ export function MerchantDashboard({
       if (cancelled) return;
 
       if (!sessionToken) {
-        // Embedded Admin without token: retry once more after a beat, then fail soft
         setBootstrapState("failed");
         setBootstrapError(
           isEmbeddedAdminOpen()
@@ -207,13 +206,8 @@ export function MerchantDashboard({
 
         if (result.ok && result.installed) {
           const shopReady = result.shop || data.shop!;
-          // Cold install / no brand yet → stay in-app (Brand Connect). No OAuth.
-          if (result.needsBrandConnect) {
-            setClientBrandConnectShop(shopReady);
-            setBootstrapState("idle");
-            return;
-          }
-          // Brand already linked — reload once so SSR can serve the full dashboard
+          // Cold or warm: stay in-app. Reload once so SSR can serve the dashboard.
+          // Do not route cold installs to external account / brand-connect UI.
           const reloadKey = `lf_dash_reload_${shopReady}`;
           try {
             if (
@@ -387,7 +381,10 @@ export function MerchantDashboard({
             body.error ||
             (body.code === "missing_access_token"
               ? "No access token on file — reinstall the app from Shopify."
-              : "Try again or reinstall the app."),
+              : body.code === "missing_brand_key" ||
+                  /brandKey|brand key/i.test(String(body.error || ""))
+                ? "Add a brand key below, then try Refresh tracking again."
+                : "Try again or reinstall the app."),
         });
         // Do NOT auto-reload on failure — keep the error visible
         return;
@@ -406,7 +403,7 @@ export function MerchantDashboard({
             ? "Web Pixel needs more permissions"
             : "Tracking partially updated",
           message: missingPixels
-            ? `Shopify did not grant write_pixels / read_customer_events. Current scopes: ${scopes || "unknown"}. Update Vercel SCOPES, redeploy, then uninstall and reinstall the app. Details: ${errList.slice(0, 4).join(" · ") || "web pixel not created"}`
+            ? `Shopify did not grant write_pixels / read_customer_events. Current scopes: ${scopes || "unknown"}. Update app scopes, redeploy, then uninstall and reinstall the app. Details: ${errList.slice(0, 4).join(" · ") || "web pixel not created"}`
             : `Some steps failed: ${errList.slice(0, 5).join(" · ")}`,
         });
         // Keep errors on screen — no auto-reload
@@ -434,19 +431,19 @@ export function MerchantDashboard({
     const steps: Array<{ done: boolean; title: string; detail: string }> = [
       {
         done: Boolean(store?.brandKey),
-        title: store?.brandKey
-          ? "Brand key linked"
-          : "Set your brand key",
+        title: store?.brandKey ? "Brand key linked" : "Optional: set brand key",
         detail: store?.brandKey
-          ? "This store is linked to your Link Flow brand (key is locked)."
-          : "Enter the brand key from your Link Flow Setup page, or install the app from Setup so it is applied automatically.",
+          ? "This store is linked to a tracking brand key (locked)."
+          : "If you received a brand key with install (starts with fb_), enter it below. Warm installs apply it automatically.",
       },
       {
         done: trackingActive,
         title: "Tracking is installed on your store",
         detail: trackingActive
           ? "Script tag, web pixel, and/or webhooks are active."
-          : "Click “Refresh tracking” if something shows as missing.",
+          : store?.brandKey
+            ? "Click “Refresh tracking” if something shows as missing."
+            : "Add a brand key first, then use Refresh tracking.",
       },
       {
         done: data.sales.totalCount > 0,
@@ -454,41 +451,17 @@ export function MerchantDashboard({
         detail:
           "Place a small test order on your storefront. It should appear under Recent sales below.",
       },
-      {
-        done: false,
-        title: "Open the full Link Flow dashboard",
-        detail: "Manage affiliates, commissions, and payouts on Link Flow.",
-      },
     ];
     return steps;
   }, [store?.brandKey, trackingActive, data.sales.totalCount]);
-
-  // Managed install finished client-side — brand account still required
-  if (clientBrandConnectShop) {
-    return (
-      <BrandConnectScreen
-        shop={clientBrandConnectShop}
-        actionToken={actionToken}
-        onConnected={() => {
-          try {
-            sessionStorage.removeItem(
-              `lf_dash_reload_${clientBrandConnectShop}`,
-            );
-          } catch {
-            /* ignore */
-          }
-          reloadAppHome(clientBrandConnectShop, { connected: "1" });
-        }}
-      />
-    );
-  }
 
   // Post-install / embedded open: complete session or managed install quietly.
   // Do not start a second OAuth inside the iframe (reviewer "refused to connect").
   if (data.authRequired || data.needsInstall || !store) {
     const shopLabel = data.shop || "your store";
     const isPending = bootstrapState === "pending" || bootstrapState === "idle";
-    const showFallback = bootstrapState === "failed" || (!data.shop && !isPending);
+    const showFallback =
+      bootstrapState === "failed" || (!data.shop && !isPending);
     const oauthHref = data.shop
       ? buildOAuthBeginUrl({
           shop: data.shop,
@@ -539,8 +512,8 @@ export function MerchantDashboard({
                   {isPending ? (
                     <p>
                       If you just approved permissions in Shopify, we are
-                      linking this store and will open brand setup or the
-                      dashboard next. Do not click Install again.
+                      linking this store and will open the tracking dashboard
+                      next. Do not click Install again.
                     </p>
                   ) : (
                     <BlockStack gap="300">
@@ -557,7 +530,6 @@ export function MerchantDashboard({
                             variant="primary"
                             onClick={() => {
                               setBootstrapState("idle");
-                              // Re-run effect by toggling via full reload preserving host
                               reloadAppHome(data.shop!);
                             }}
                           >
@@ -615,19 +587,6 @@ export function MerchantDashboard({
     );
   }
 
-  // App Store install path: store is active but no brand key yet
-  if (!store.brandKey?.trim() && data.shop) {
-    return (
-      <BrandConnectScreen
-        shop={data.shop}
-        actionToken={actionToken}
-        onConnected={() => {
-          window.location.href = `/?shop=${encodeURIComponent(data.shop!)}&connected=1`;
-        }}
-      />
-    );
-  }
-
   const salesRows = data.sales.recent.map((s) => [
     s.orderId || "—",
     s.amount,
@@ -642,27 +601,19 @@ export function MerchantDashboard({
       title="Link Flow Affiliates"
       subtitle={store.name}
       primaryAction={{
-        content: "Open full Brand Dashboard",
-        url: data.linkFlowDashboardUrl,
-        external: true,
-        icon: ExternalIcon,
+        content: provisioning ? "Refreshing…" : "Refresh tracking",
+        onAction: reProvision,
+        loading: provisioning,
+        disabled: provisioning || !canAuth,
       }}
-      secondaryActions={[
-        {
-          content: provisioning ? "Refreshing…" : "Refresh tracking",
-          onAction: reProvision,
-          loading: provisioning,
-          disabled: provisioning,
-        },
-      ]}
     >
       <BlockStack gap="400">
         {justConnected ? (
-          <Banner title="Brand connected" tone="success">
+          <Banner title="Brand key saved" tone="success">
             <p>
               Your brand key is locked to this store and tracking was
-              provisioned. Open the full Link Flow dashboard to manage products
-              and affiliates.
+              provisioned. Use Refresh tracking anytime to reinstall scripts and
+              webhooks.
             </p>
           </Banner>
         ) : null}
@@ -678,8 +629,8 @@ export function MerchantDashboard({
           >
             <p>
               {trackingActive
-                ? "Sales from your store will be recorded automatically. Place a test order when you’re ready, or open the full brand dashboard."
-                : "Confirm tracking status below. If something is missing, use Refresh tracking."}
+                ? "Sales from your store will be recorded automatically. Place a test order when you’re ready."
+                : "Confirm tracking status below. If something is missing, add a brand key if needed, then use Refresh tracking."}
             </p>
           </Banner>
         ) : null}
@@ -687,9 +638,9 @@ export function MerchantDashboard({
         <Banner tone="info" title="How we use your store data">
           <p>
             Link Flow records order ID, amount, products, referral code, and
-            shop domain for affiliate attribution and commissions. We do{" "}
-            <strong>not</strong> collect customer name, email, address, or
-            phone, and we do not sell personal data.{" "}
+            shop domain for affiliate attribution. We do <strong>not</strong>{" "}
+            collect customer name, email, address, or phone, and we do not sell
+            personal data.{" "}
             <Link url="/privacy" target="_blank">
               Read our Privacy Policy
             </Link>
@@ -733,20 +684,18 @@ export function MerchantDashboard({
                     </List.Item>
                   ))}
                 </List>
-                <InlineStack gap="200">
-                  <Button url={data.linkFlowDashboardUrl} external>
-                    Open full Brand Dashboard
-                  </Button>
-                  {!trackingActive ? (
+                {!trackingActive ? (
+                  <InlineStack gap="200">
                     <Button
                       onClick={reProvision}
                       loading={provisioning}
                       disabled={provisioning || !canAuth}
+                      variant="primary"
                     >
                       Refresh tracking
                     </Button>
-                  ) : null}
-                </InlineStack>
+                  </InlineStack>
+                ) : null}
               </BlockStack>
             </Card>
           </Layout.Section>
@@ -781,7 +730,9 @@ export function MerchantDashboard({
                         App status
                       </Text>
                       <Badge
-                        tone={store.status === "ACTIVE" ? "success" : "attention"}
+                        tone={
+                          store.status === "ACTIVE" ? "success" : "attention"
+                        }
                       >
                         {store.status === "ACTIVE" ? "Connected" : store.status}
                       </Badge>
@@ -791,7 +742,10 @@ export function MerchantDashboard({
                     </Text>
                     {!store.scopes.includes("write_pixels") ||
                     !store.scopes.includes("read_customer_events") ? (
-                      <Banner tone="warning" title="Pixel permissions incomplete">
+                      <Banner
+                        tone="warning"
+                        title="Pixel permissions incomplete"
+                      >
                         <p>
                           Web Pixel needs both <strong>write_pixels</strong> and{" "}
                           <strong>read_customer_events</strong>. This install
@@ -800,7 +754,9 @@ export function MerchantDashboard({
                             {store.scopes || "none"}
                           </code>
                           . Add the missing scopes in{" "}
-                          <strong>Shopify Dev Dashboard → App → Versions</strong>
+                          <strong>
+                            Shopify Dev Dashboard → App → Versions
+                          </strong>
                           , release, then uninstall and reinstall this app.
                         </p>
                       </Banner>
@@ -824,26 +780,26 @@ export function MerchantDashboard({
                   {brandKeyLocked ? (
                     <>
                       <Text as="p" tone="subdued">
-                        This key links Shopify sales to your Link Flow
-                        Affiliates brand. It was set when you installed the app
-                        (or on first save) and cannot be changed here.
+                        This key links Shopify sales to your brand for
+                        attribution. It was set when you installed the app (or
+                        on first save) and cannot be changed here.
                       </Text>
                       <FormLayout>
                         <TextField
-                          label="Link Flow brand key"
+                          label="Brand key"
                           value={store.brandKey ?? ""}
                           autoComplete="off"
                           monospaced
                           readOnly
-                          helpText="Contact Link Flow support if you need this key changed."
+                          helpText="Contact support if you need this key changed."
                         />
                       </FormLayout>
                       <Banner tone="info" title="Brand key is locked">
                         <p>
                           For security, the brand key cannot be edited in the
-                          app once it is set. Email{" "}
-                          <CopyEmailLink email="support@linkflowaffiliates.com" />{" "}
-                          if you need it updated or moved to another store.
+                          app once it is set. Contact{" "}
+                          <CopyEmailLink>app support</CopyEmailLink> if you need
+                          it updated or moved to another store.
                         </p>
                       </Banner>
                       <InlineStack gap="200">
@@ -858,15 +814,14 @@ export function MerchantDashboard({
                   ) : (
                     <>
                       <Text as="p" tone="subdued">
-                        Enter the brand key from your Link Flow Setup page
-                        (starts with <code>fb_</code>). You can only set this
-                        once — after that it is locked. Prefer installing the
-                        app from Link Flow Setup so the key is applied
-                        automatically.
+                        Optional. Enter a brand key if one was provided with
+                        your install (usually starts with <code>fb_</code>). You
+                        can only set this once — after that it is locked. Warm
+                        installs apply the key automatically.
                       </Text>
                       <FormLayout>
                         <TextField
-                          label="Link Flow brand key"
+                          label="Brand key"
                           value={brandKeyInput}
                           onChange={setBrandKeyInput}
                           autoComplete="off"
@@ -880,7 +835,7 @@ export function MerchantDashboard({
                           variant="primary"
                           onClick={saveBrandKey}
                           loading={saving}
-                          disabled={saving || !brandKeyInput.trim()}
+                          disabled={saving || !brandKeyInput.trim() || !canAuth}
                         >
                           Save &amp; activate
                         </Button>
@@ -905,8 +860,8 @@ export function MerchantDashboard({
                   </Badge>
                 </InlineStack>
                 <Text as="p" tone="subdued">
-                  These run in the background. You don’t need to paste code
-                  into your theme for basic tracking.
+                  These run in the background. You don’t need to paste code into
+                  your theme for basic tracking.
                 </Text>
                 <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
                   <StatusPill
@@ -992,7 +947,8 @@ export function MerchantDashboard({
                 <Text as="p" tone="subdued">
                   We only use order and referral data to power affiliate
                   tracking. Questions or deletion requests:{" "}
-                  <CopyEmailLink email="support@linkflowaffiliates.com" />
+                  <CopyEmailLink>app support</CopyEmailLink> (copies contact
+                  email).
                 </Text>
                 <Link url="/privacy">Full Privacy Policy</Link>
               </BlockStack>
@@ -1002,14 +958,9 @@ export function MerchantDashboard({
           <Layout.Section>
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    Recent sales
-                  </Text>
-                  <Link url={data.linkFlowDashboardUrl} target="_blank">
-                    View in Link Flow
-                  </Link>
-                </InlineStack>
+                <Text as="h2" variant="headingMd">
+                  Recent sales
+                </Text>
                 {salesRows.length > 0 ? (
                   <DataTable
                     columnContentTypes={[

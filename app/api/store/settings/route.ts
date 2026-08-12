@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "Brand key is locked and cannot be changed from the app. Contact Link Flow support if you need it updated.",
+              "Brand key is locked and cannot be changed from the app. Contact app support if you need it updated.",
             code: "brand_key_locked",
             brandKey: store.brandKey,
           },

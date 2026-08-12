@@ -5,8 +5,8 @@ import { getOAuthRedirectUri, sanitizeShopDomain } from "@/lib/shopify";
 /**
  * Begin Shopify OAuth.
  * GET /api/auth?shop=example.myshopify.com
- * Optional: &brandKey=fb_… (from Link Flow brand setup — signed into OAuth state)
- * Omit brandKey for App Store / cold install → Brand Connect screen after install.
+ * Optional: &brandKey=fb_… (warm install — signed into OAuth state)
+ * Omit brandKey for App Store / cold install → in-app dashboard only (no external connect).
  * Test entry: /test/cold-install
  */
 export async function GET(request: NextRequest) {

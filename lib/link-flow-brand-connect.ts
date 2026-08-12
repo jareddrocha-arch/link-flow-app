@@ -102,19 +102,18 @@ export async function connectBrandOnLinkFlow(options: {
   }
 }
 
-export function getLinkFlowBrandDashboardUrl(): string {
+/**
+ * Server-side only: resolve platform dashboard URL for non-UI integrations.
+ * Do not surface this URL in the embedded Shopify app UI (App Store review).
+ */
+export function getLinkFlowBrandDashboardUrl(): string | null {
   const base =
-    process.env.LINK_FLOW_DASHBOARD_URL?.trim() ||
-    getLinkFlowApiUrl() ||
-    "https://www.linkflowaffiliates.com";
-  // Prefer brand dashboard home when linked
+    process.env.LINK_FLOW_DASHBOARD_URL?.trim() || getLinkFlowApiUrl();
+  if (!base) return null;
   try {
     const u = new URL(base);
-    if (u.pathname.includes("/brand/")) {
-      return u.origin + "/brand/dashboard";
-    }
     return `${u.origin}/brand/dashboard`;
   } catch {
-    return "https://www.linkflowaffiliates.com/brand/dashboard";
+    return null;
   }
 }

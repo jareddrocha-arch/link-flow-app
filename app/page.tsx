@@ -21,8 +21,9 @@ type HomeProps = {
 /**
  * Embedded app home / post-install onboarding dashboard.
  *
- * - Store installed but no brandKey → BrandConnectScreen (signup/login)
- * - brandKey already set (e.g. Link Flow Setup install) → normal dashboard
+ * - Cold install (no brandKey) → in-app dashboard (tracking + optional key)
+ * - Warm install (brandKey in URL) → key applied at bootstrap/OAuth, dashboard
+ * - No external website CTAs, brand-connect signup, or billing UI (App Review)
  *
  * Merchant data is only loaded when authorized (session JWT or signed cookie).
  * Action tokens are only issued after that gate passes.

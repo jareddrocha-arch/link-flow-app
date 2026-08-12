@@ -53,16 +53,16 @@ export function ColdInstallClient({ debugKey, appOriginHint }: Props) {
       <p className="mt-2 text-sm text-zinc-600">
         Starts a normal Shopify OAuth install <strong>without</strong> a brand
         key — same as installing from the App Store. After approve, you should
-        land on the embedded app home and see{" "}
-        <strong>Connect your brand</strong> (signup / login).
+        land on the embedded app home (tracking status, optional brand key,
+        privacy) with <strong>no external website or billing CTAs</strong>.
       </p>
 
       <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-        <p className="font-medium">Does not break Setup installs</p>
+        <p className="font-medium">Does not break warm installs</p>
         <p className="mt-1">
-          Installs from Link Flow Setup still pass{" "}
-          <code className="rounded bg-amber-100 px-1">brandKey</code> and skip
-          this screen when a key is already linked.
+          Installs that pass{" "}
+          <code className="rounded bg-amber-100 px-1">brandKey</code> still
+          apply the key automatically during OAuth / bootstrap.
         </p>
       </div>
 

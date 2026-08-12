@@ -10,7 +10,7 @@ type PageProps = {
  * Production: /test/cold-install?key=DEBUG_SECRET
  * Dev: /test/cold-install
  *
- * After OAuth: embedded app home → Brand Connect if store has no brandKey.
+ * After OAuth: embedded app home (self-contained dashboard; no external connect).
  */
 export default async function ColdInstallTestPage({ searchParams }: PageProps) {
   const params = await searchParams;

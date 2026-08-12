@@ -173,7 +173,10 @@ export async function POST(request: NextRequest) {
       shop: store.shop,
       installed: true,
       brandKey: store.brandKey,
-      needsBrandConnect: !store.brandKey?.trim(),
+      // Cold install is self-contained in the embedded app (no external connect UI).
+      // Kept for backward-compatible clients; always false for review-safe flow.
+      needsBrandConnect: false,
+      hasBrandKey: Boolean(store.brandKey?.trim()),
       provisioned,
       auth: "session_token",
     });

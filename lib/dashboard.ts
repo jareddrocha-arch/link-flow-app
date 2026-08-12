@@ -52,7 +52,6 @@ export type MerchantDashboardData = {
     totalAmount: string;
     recent: DashboardSale[];
   };
-  linkFlowDashboardUrl: string;
   needsInstall: boolean;
 };
 
@@ -78,9 +77,7 @@ function mapSale(s: Sale): DashboardSale {
 }
 
 function emptyDashboard(
-  partial: Partial<MerchantDashboardData> & {
-    linkFlowDashboardUrl: string;
-  },
+  partial: Partial<MerchantDashboardData> = {},
 ): MerchantDashboardData {
   return {
     shop: null,
@@ -96,19 +93,6 @@ function emptyDashboard(
     needsInstall: true,
     ...partial,
   };
-}
-
-function linkFlowDashboardUrl(): string {
-  const configured = process.env.LINK_FLOW_DASHBOARD_URL?.trim();
-  if (configured) {
-    try {
-      const u = new URL(configured);
-      return `${u.origin}/brand/dashboard`;
-    } catch {
-      return configured;
-    }
-  }
-  return "https://www.linkflowaffiliates.com/brand/dashboard";
 }
 
 /**
@@ -188,7 +172,6 @@ export async function loadMerchantDashboard(
       ? shopParamOrOptions
       : { shop: shopParamOrOptions as string | null | undefined };
 
-  const dashUrl = linkFlowDashboardUrl();
   const { shop, authorized } = await resolveDashboardAuth({
     shopParam: options.shop,
     idToken: options.idToken,
@@ -197,7 +180,6 @@ export async function loadMerchantDashboard(
 
   if (!shop) {
     return emptyDashboard({
-      linkFlowDashboardUrl: dashUrl,
       needsInstall: true,
       authRequired: false,
     });
@@ -207,7 +189,6 @@ export async function loadMerchantDashboard(
   if (!authorized) {
     return emptyDashboard({
       shop,
-      linkFlowDashboardUrl: dashUrl,
       needsInstall: false,
       authRequired: true,
       tracking: {
@@ -228,7 +209,6 @@ export async function loadMerchantDashboard(
   if (!store) {
     return emptyDashboard({
       shop,
-      linkFlowDashboardUrl: dashUrl,
       needsInstall: true,
       authRequired: false,
       tracking: {
@@ -285,7 +265,6 @@ export async function loadMerchantDashboard(
       totalAmount: money(totalAmount),
       recent: recent.map(mapSale),
     },
-    linkFlowDashboardUrl: dashUrl,
     needsInstall: store.status !== "ACTIVE",
   };
 }

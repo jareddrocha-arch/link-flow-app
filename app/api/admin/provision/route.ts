@@ -74,6 +74,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (!store.brandKey?.trim()) {
+    return NextResponse.json(
+      {
+        error:
+          "No brand key on this store yet. Add a brand key in the app, then try again.",
+        code: "missing_brand_key",
+        shop: store.shop,
+        brandKey: null,
+      },
+      { status: 400 },
+    );
+  }
+
   try {
     const result = await provisionStoreTracking(store);
 
