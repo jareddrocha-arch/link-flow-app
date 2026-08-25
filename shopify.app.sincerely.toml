@@ -1,0 +1,36 @@
+# LinkFlow - Sincerely Silver (custom app)
+# Deploy extensions: shopify app deploy --config sincerely
+# Do not use this config for the main Link Flow Affiliates App.
+
+client_id = "8769fb4e1d097fd540f9beab6111a266"
+name = "LinkFlow - Sincerely Silver"
+application_url = "https://link-flow-app-amber.vercel.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+scopes = "read_orders,write_script_tags,write_pixels,read_customer_events"
+use_legacy_install_flow = false
+
+[access.admin]
+embedded_app_direct_api_access = true
+direct_api_mode = "offline"
+
+[auth]
+redirect_urls = [
+  "https://link-flow-app-amber.vercel.app/api/auth/callback",
+  "http://localhost:3000/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
