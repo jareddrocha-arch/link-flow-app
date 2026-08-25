@@ -3,6 +3,7 @@ import {
   debugUnauthorizedResponse,
   isDebugAuthorized,
 } from "@/lib/debug-auth";
+import { shopifyCredentialSummary } from "@/lib/shopify-credentials";
 import { getOAuthRedirectUri, resolveAppUrl } from "@/lib/shopify";
 
 /**
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
     hostEnv: process.env.HOST ?? null,
     vercelUrl: process.env.VERCEL_URL ?? null,
     vercelProductionUrl: process.env.VERCEL_PROJECT_PRODUCTION_URL ?? null,
+    shopifyApps: shopifyCredentialSummary(),
     tips: [
       "In Shopify Partner Dashboard → App → Versions → URLs (or Configuration):",
       `App URL = ${appUrl}`,

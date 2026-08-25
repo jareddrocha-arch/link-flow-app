@@ -3,6 +3,11 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { Session } from "@shopify/shopify-api";
 import { isValidBrandKey } from "@/lib/brand-key";
+import {
+  orderedShopifyCredentials,
+  resolveShopifyCredentials,
+  type ShopifyAppCredentials,
+} from "@/lib/shopify-credentials";
 import { getShopify, getOAuthRedirectUri, OAUTH_CALLBACK_PATH } from "@/lib/shopify";
 
 const STATE_COOKIE = "lf_shopify_oauth_state";
@@ -13,14 +18,8 @@ const OAUTH_COOKIE_MAX_AGE = 60 * 10;
 
 export { OAUTH_CALLBACK_PATH };
 
-function getCredentials() {
-  // Trim — Vercel/env pastes often include trailing newlines/spaces and break HMAC
-  const apiKey = process.env.SHOPIFY_API_KEY?.trim();
-  const apiSecret = process.env.SHOPIFY_API_SECRET?.trim();
-  if (!apiKey || !apiSecret) {
-    throw new Error("Missing SHOPIFY_API_KEY or SHOPIFY_API_SECRET");
-  }
-  return { apiKey, apiSecret };
+function signState(body: string, apiSecret: string): string {
+  return createHmac("sha256", apiSecret).update(body).digest("base64url");
 }
 
 /**
@@ -66,8 +65,12 @@ type OAuthStatePayload = {
  * Signed OAuth state: CSRF nonce + optional brandKey (HMAC with API secret).
  * Format: base64url(json).base64url(hmac)
  */
-export function encodeOAuthState(brandKey?: string | null): string {
-  const { apiSecret } = getCredentials();
+export function encodeOAuthState(
+  brandKey?: string | null,
+  credentials?: ShopifyAppCredentials,
+): string {
+  const apiSecret =
+    credentials?.apiSecret ?? resolveShopifyCredentials().apiSecret;
   const payload: OAuthStatePayload = {
     n: randomBytes(16).toString("hex"),
     exp: Date.now() + OAUTH_COOKIE_MAX_AGE * 1000,
@@ -77,17 +80,24 @@ export function encodeOAuthState(brandKey?: string | null): string {
     payload.bk = key;
   }
   const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const sig = createHmac("sha256", apiSecret).update(body).digest("base64url");
+  const sig = signState(body, apiSecret);
   return `${body}.${sig}`;
 }
 
-export function decodeOAuthState(state: string): OAuthStatePayload | null {
+export function decodeOAuthState(
+  state: string,
+  credentials?: ShopifyAppCredentials,
+): OAuthStatePayload | null {
   try {
-    const { apiSecret } = getCredentials();
     const [body, sig] = state.split(".");
     if (!body || !sig) return null;
-    const expected = createHmac("sha256", apiSecret).update(body).digest("base64url");
-    if (!safeEqual(sig, expected)) return null;
+    const secrets = credentials
+      ? [credentials.apiSecret]
+      : orderedShopifyCredentials().map((item) => item.apiSecret);
+    const matched = secrets.some((apiSecret) =>
+      safeEqual(sig, signState(body, apiSecret)),
+    );
+    if (!matched) return null;
     const payload = JSON.parse(
       Buffer.from(body, "base64url").toString("utf8"),
     ) as OAuthStatePayload;
@@ -112,18 +122,18 @@ export function beginOAuthRedirect(options: {
   requestUrl: string;
   brandKey?: string | null;
 }): NextResponse {
-  const shopify = getShopify(options.requestUrl);
+  const credentials = resolveShopifyCredentials({ shop: options.shop });
+  const shopify = getShopify(options.requestUrl, credentials);
   const shop = shopify.utils.sanitizeShop(options.shop, true);
   if (!shop) {
     throw new Error("Invalid shop domain");
   }
 
-  const { apiKey } = getCredentials();
   const brandKey =
     options.brandKey && isValidBrandKey(options.brandKey.trim())
       ? options.brandKey.trim()
       : null;
-  const state = encodeOAuthState(brandKey);
+  const state = encodeOAuthState(brandKey, credentials);
   const redirectUri = getOAuthRedirectUri(options.requestUrl);
   const scope = getScopes();
 
@@ -132,10 +142,11 @@ export function beginOAuthRedirect(options: {
     scope,
     redirectUri,
     hasBrandKey: Boolean(brandKey),
+    credentialsId: credentials.id,
   });
 
   const authorize = new URL(`https://${shop}/admin/oauth/authorize`);
-  authorize.searchParams.set("client_id", apiKey);
+  authorize.searchParams.set("client_id", credentials.apiKey);
   authorize.searchParams.set("scope", scope);
   authorize.searchParams.set("redirect_uri", redirectUri);
   authorize.searchParams.set("state", state);
@@ -171,6 +182,8 @@ export type OAuthCallbackResult =
       tokenMeta: OAuthTokenMeta;
       /** Brand key from signed OAuth state / cookie (Link Flow install). */
       brandKey: string | null;
+      /** Client ID of the app that completed this install. */
+      clientId: string;
     }
   | { ok: false; code: string; message: string };
 
@@ -189,10 +202,6 @@ export async function completeOAuth(options: {
   requestUrl: string;
 }): Promise<OAuthCallbackResult> {
   const url = new URL(options.requestUrl);
-  const { apiKey, apiSecret } = getCredentials();
-  // Pass trimmed secret into Shopify client for HMAC + any library calls
-  const shopify = getShopify(options.requestUrl);
-
   const shopParam = url.searchParams.get("shop");
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
@@ -205,46 +214,54 @@ export async function completeOAuth(options: {
     };
   }
 
+  let shopify = getShopify(
+    options.requestUrl,
+    resolveShopifyCredentials({ shop: shopParam }),
+  );
   const shop = shopify.utils.sanitizeShop(shopParam, true);
   if (!shop) {
     return { ok: false, code: "invalid_shop", message: "Invalid shop domain" };
   }
 
-  // Use official Shopify HMAC (URL-encoded query string + hex digest)
-  try {
-    const query = authQueryFromUrl(url);
-    const valid = await shopify.utils.validateHmac(query);
-    if (!valid) {
-      console.error("[oauth/callback] invalid_hmac", {
-        secretLength: apiSecret.length,
-        secretPrefix: apiSecret.slice(0, 6),
-        hasHmac: Boolean(query.hmac),
-        hasTimestamp: Boolean(query.timestamp),
-        keys: Object.keys(query).sort(),
-      });
-      return {
-        ok: false,
-        code: "invalid_hmac",
-        message:
-          "HMAC validation failed — SHOPIFY_API_SECRET does not match this Client ID (or has extra spaces/newlines in Vercel).",
-      };
+  const query = authQueryFromUrl(url);
+  let credentials: ShopifyAppCredentials | null = null;
+
+  // Try preferred (shop / default) first, then other app secrets
+  for (const candidate of orderedShopifyCredentials({ shop })) {
+    const client = getShopify(options.requestUrl, candidate);
+    try {
+      if (await client.utils.validateHmac(query)) {
+        credentials = candidate;
+        shopify = client;
+        break;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[oauth/callback] hmac error:", message);
+      if (/timestamp/i.test(message)) {
+        return {
+          ok: false,
+          code: "hmac_timestamp",
+          message:
+            "OAuth callback took too long (HMAC timestamp expired). Click install again and approve quickly.",
+        };
+      }
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("[oauth/callback] hmac error:", message);
-    // Timestamp window is only ~90s in the library — surface that clearly
-    if (/timestamp/i.test(message)) {
-      return {
-        ok: false,
-        code: "hmac_timestamp",
-        message:
-          "OAuth callback took too long (HMAC timestamp expired). Click install again and approve quickly.",
-      };
-    }
+  }
+
+  if (!credentials) {
+    console.error("[oauth/callback] invalid_hmac", {
+      shop,
+      tried: orderedShopifyCredentials({ shop }).map((item) => item.id),
+      hasHmac: Boolean(query.hmac),
+      hasTimestamp: Boolean(query.timestamp),
+      keys: Object.keys(query).sort(),
+    });
     return {
       ok: false,
       code: "invalid_hmac",
-      message: `HMAC validation failed: ${message.slice(0, 100)}`,
+      message:
+        "HMAC validation failed — SHOPIFY_API_SECRET does not match this Client ID (or has extra spaces/newlines in Vercel).",
     };
   }
 
@@ -254,7 +271,8 @@ export async function completeOAuth(options: {
   const savedBrandKey = cookieStore.get(BRAND_COOKIE)?.value?.trim() || null;
 
   // Prefer verifying signed state payload (works even if cookie is delayed)
-  const decoded = decodeOAuthState(state);
+  const decoded =
+    decodeOAuthState(state, credentials) ?? decodeOAuthState(state);
   if (!decoded) {
     // Fallback: plain hex state from older installs still in flight
     if (!savedState || !safeEqual(savedState, state)) {
@@ -298,7 +316,11 @@ export async function completeOAuth(options: {
   };
   try {
     const { exchangeAuthorizationCode } = await import("@/lib/shopify-tokens");
-    tokenJson = await exchangeAuthorizationCode({ shop, code });
+    tokenJson = await exchangeAuthorizationCode({
+      shop,
+      code,
+      credentials,
+    });
   } catch (e) {
     return {
       ok: false,
@@ -341,6 +363,7 @@ export async function completeOAuth(options: {
       refreshTokenExpiresIn: tokenJson.refresh_token_expires_in ?? null,
     },
     brandKey,
+    clientId: credentials.apiKey,
   };
 }
 

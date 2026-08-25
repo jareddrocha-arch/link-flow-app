@@ -5,15 +5,10 @@ import {
   Session,
   type Shopify,
 } from "@shopify/shopify-api";
-
-function requireEnv(name: string): string {
-  // Trim — secrets pasted into Vercel often include trailing newlines that break HMAC
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
+import {
+  resolveShopifyCredentials,
+  type ShopifyAppCredentials,
+} from "@/lib/shopify-credentials";
 
 /**
  * Resolve public app origin used for OAuth redirect_uri.
@@ -105,10 +100,15 @@ export const OAUTH_CALLBACK_PATH = "/api/auth/callback";
 /**
  * Shopify API client for a given request / host.
  * Built per-call so redirect_uri always matches the live app URL.
+ * Pass credentials when serving a custom app (Client ID / secret pair).
  */
-export function getShopify(requestUrl?: string | URL): Shopify {
+export function getShopify(
+  requestUrl?: string | URL,
+  credentials?: ShopifyAppCredentials | null,
+): Shopify {
   const appUrl = resolveAppUrl(requestUrl);
   const { hostName, hostScheme } = parseHost(appUrl);
+  const creds = credentials ?? resolveShopifyCredentials();
 
   const required = [
     "read_orders",
@@ -128,8 +128,8 @@ export function getShopify(requestUrl?: string | URL): Shopify {
     process.env.SHOPIFY_APP_EMBEDDED?.trim() !== "false";
 
   return shopifyApi({
-    apiKey: requireEnv("SHOPIFY_API_KEY"),
-    apiSecretKey: requireEnv("SHOPIFY_API_SECRET"),
+    apiKey: creds.apiKey,
+    apiSecretKey: creds.apiSecret,
     scopes,
     hostName,
     hostScheme,

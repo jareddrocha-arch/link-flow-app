@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { handleComplianceWebhook } from "@/lib/compliance";
 import { recordStoreSale } from "@/lib/record-sale";
+import { orderedShopifyCredentials } from "@/lib/shopify-credentials";
 import { normalizeShop } from "@/lib/stores";
 import { cleanupShopUninstall } from "@/lib/uninstall";
 
@@ -13,15 +14,35 @@ import { cleanupShopUninstall } from "@/lib/uninstall";
  * App Store automated check: invalid → false (caller returns 401);
  * valid → true (caller returns 200).
  */
+function hmacEqualsBase64(digest: string, hmac: string): boolean {
+  try {
+    const a = Buffer.from(digest, "utf8");
+    const b = Buffer.from(hmac, "utf8");
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
 export function verifyShopifyWebhookHmac(
   rawBody: string | Buffer,
   hmacHeader: string | null | undefined,
+  options?: { shop?: string | null },
 ): boolean {
   const hmac = typeof hmacHeader === "string" ? hmacHeader.trim() : "";
   if (!hmac) return false;
 
-  const secret = process.env.SHOPIFY_API_SECRET?.trim();
-  if (!secret) {
+  let candidates;
+  try {
+    candidates = orderedShopifyCredentials({ shop: options?.shop });
+  } catch {
+    console.error(
+      "[webhook] SHOPIFY_API_SECRET is missing — cannot verify HMAC",
+    );
+    return false;
+  }
+  if (candidates.length === 0) {
     console.error(
       "[webhook] SHOPIFY_API_SECRET is missing — cannot verify HMAC",
     );
@@ -33,18 +54,14 @@ export function verifyShopifyWebhookHmac(
     ? rawBody
     : Buffer.from(rawBody, "utf8");
 
-  const digest = createHmac("sha256", secret).update(bodyBuf).digest("base64");
-
-  // Compare base64 strings as utf8 buffers with constant-time equality.
-  // (Shopify sends the digest as base64 text in the header.)
-  try {
-    const a = Buffer.from(digest, "utf8");
-    const b = Buffer.from(hmac, "utf8");
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
-  } catch {
-    return false;
+  // Preferred secret first (shop match / default), then other app secrets
+  for (const creds of candidates) {
+    const digest = createHmac("sha256", creds.apiSecret)
+      .update(bodyBuf)
+      .digest("base64");
+    if (hmacEqualsBase64(digest, hmac)) return true;
   }
+  return false;
 }
 
 /**
@@ -54,31 +71,42 @@ export function verifyShopifyWebhookHmac(
 export function verifyShopifyWebhookHmacBinary(
   rawBody: string | Buffer,
   hmacHeader: string | null | undefined,
+  options?: { shop?: string | null },
 ): boolean {
   const hmac = typeof hmacHeader === "string" ? hmacHeader.trim() : "";
   if (!hmac) return false;
-  const secret = process.env.SHOPIFY_API_SECRET?.trim();
-  if (!secret) return false;
+
+  let candidates;
+  try {
+    candidates = orderedShopifyCredentials({ shop: options?.shop });
+  } catch {
+    return false;
+  }
 
   const bodyBuf = Buffer.isBuffer(rawBody)
     ? rawBody
     : Buffer.from(rawBody, "utf8");
 
-  const computed = createHmac("sha256", secret).update(bodyBuf).digest();
   let received: Buffer;
   try {
     received = Buffer.from(hmac, "base64");
   } catch {
     return false;
   }
-  if (computed.length !== received.length || received.length === 0) {
-    return false;
+  if (received.length === 0) return false;
+
+  for (const creds of candidates) {
+    const computed = createHmac("sha256", creds.apiSecret)
+      .update(bodyBuf)
+      .digest();
+    if (computed.length !== received.length) continue;
+    try {
+      if (timingSafeEqual(computed, received)) return true;
+    } catch {
+      /* try next secret */
+    }
   }
-  try {
-    return timingSafeEqual(computed, received);
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 type ShopifyOrderWebhook = {

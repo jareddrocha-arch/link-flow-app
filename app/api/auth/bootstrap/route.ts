@@ -4,6 +4,7 @@ import {
   verifyShopifySessionToken,
 } from "@/lib/session-token";
 import { setShopSessionCookie } from "@/lib/shop-session";
+import { peekShopifySessionToken, resolveShopifyCredentials } from "@/lib/shopify-credentials";
 import { exchangeSessionTokenForOfflineAccess } from "@/lib/shopify-tokens";
 import { getStoreByShop, normalizeShop, upsertStoreFromOAuth } from "@/lib/stores";
 import { provisionStoreTracking } from "@/lib/provision-tracking";
@@ -106,9 +107,15 @@ export async function POST(request: NextRequest) {
         status: store?.status ?? null,
       });
 
+      const peek = peekShopifySessionToken(token);
+      const credentials = resolveShopifyCredentials({
+        clientId: peek?.aud ?? verified.payload.aud,
+        shop,
+      });
       const tokens = await exchangeSessionTokenForOfflineAccess({
         shop,
         sessionToken: token,
+        credentials,
       });
 
       store = await upsertStoreFromOAuth({

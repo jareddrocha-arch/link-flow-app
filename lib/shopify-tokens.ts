@@ -1,5 +1,9 @@
 import type { Store } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  resolveShopifyCredentials,
+  type ShopifyAppCredentials,
+} from "@/lib/shopify-credentials";
 
 type TokenResponse = {
   access_token?: string;
@@ -11,13 +15,12 @@ type TokenResponse = {
   error_description?: string;
 };
 
-function getCredentials() {
-  const clientId = process.env.SHOPIFY_API_KEY?.trim();
-  const clientSecret = process.env.SHOPIFY_API_SECRET?.trim();
-  if (!clientId || !clientSecret) {
-    throw new Error("Missing SHOPIFY_API_KEY or SHOPIFY_API_SECRET");
-  }
-  return { clientId, clientSecret };
+function credentialsForShop(
+  shop: string,
+  override?: ShopifyAppCredentials | null,
+): { clientId: string; clientSecret: string } {
+  const creds = override ?? resolveShopifyCredentials({ shop });
+  return { clientId: creds.apiKey, clientSecret: creds.apiSecret };
 }
 
 /**
@@ -60,8 +63,12 @@ export async function saveStoreTokens(
 export async function exchangeAuthorizationCode(options: {
   shop: string;
   code: string;
+  credentials?: ShopifyAppCredentials | null;
 }): Promise<TokenResponse> {
-  const { clientId, clientSecret } = getCredentials();
+  const { clientId, clientSecret } = credentialsForShop(
+    options.shop,
+    options.credentials,
+  );
   const res = await fetch(
     `https://${options.shop}/admin/oauth/access_token`,
     {
@@ -102,8 +109,12 @@ export async function exchangeAuthorizationCode(options: {
 export async function exchangeSessionTokenForOfflineAccess(options: {
   shop: string;
   sessionToken: string;
+  credentials?: ShopifyAppCredentials | null;
 }): Promise<TokenResponse> {
-  const { clientId, clientSecret } = getCredentials();
+  const { clientId, clientSecret } = credentialsForShop(
+    options.shop,
+    options.credentials,
+  );
   const body = new URLSearchParams({
     client_id: clientId,
     client_secret: clientSecret,
@@ -146,8 +157,12 @@ export async function exchangeSessionTokenForOfflineAccess(options: {
 export async function refreshOfflineToken(options: {
   shop: string;
   refreshToken: string;
+  credentials?: ShopifyAppCredentials | null;
 }): Promise<TokenResponse> {
-  const { clientId, clientSecret } = getCredentials();
+  const { clientId, clientSecret } = credentialsForShop(
+    options.shop,
+    options.credentials,
+  );
   const res = await fetch(
     `https://${options.shop}/admin/oauth/access_token`,
     {
@@ -182,8 +197,12 @@ export async function refreshOfflineToken(options: {
 export async function migrateToExpiringOfflineToken(options: {
   shop: string;
   nonExpiringToken: string;
+  credentials?: ShopifyAppCredentials | null;
 }): Promise<TokenResponse> {
-  const { clientId, clientSecret } = getCredentials();
+  const { clientId, clientSecret } = credentialsForShop(
+    options.shop,
+    options.credentials,
+  );
   const body = new URLSearchParams({
     client_id: clientId,
     client_secret: clientSecret,

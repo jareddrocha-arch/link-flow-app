@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     "";
   const webhookId = request.headers.get("x-shopify-webhook-id") || null;
 
-  if (!verifyShopifyWebhookHmac(rawBodyBuffer, hmac)) {
+  if (!verifyShopifyWebhookHmac(rawBodyBuffer, hmac, { shop: shopDomain })) {
     console.warn("[webhook] invalid hmac", {
       topic,
       shopDomain,

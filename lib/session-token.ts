@@ -1,4 +1,8 @@
 import type { NextRequest } from "next/server";
+import {
+  orderedShopifyCredentials,
+  peekShopifySessionToken,
+} from "@/lib/shopify-credentials";
 import { getShopify } from "@/lib/shopify";
 import { normalizeShop } from "@/lib/stores";
 
@@ -38,23 +42,33 @@ export async function verifyShopifySessionToken(
 ): Promise<{ shop: string; payload: { dest: string; aud: string; exp: number } } | null> {
   if (!token?.trim()) return null;
 
-  try {
-    const shopify = getShopify(requestUrl);
-    const payload = await shopify.session.decodeSessionToken(token.trim());
-    const dest = new URL(payload.dest);
-    const shop = normalizeShop(dest.hostname);
-    if (!shop) return null;
-    return {
-      shop,
-      payload: {
-        dest: payload.dest,
-        aud: String(payload.aud),
-        exp: Number(payload.exp),
-      },
-    };
-  } catch {
-    return null;
+  const peek = peekShopifySessionToken(token);
+  const hints = {
+    clientId: peek?.aud,
+    shop: peek?.destHost,
+  };
+
+  for (const creds of orderedShopifyCredentials(hints)) {
+    try {
+      const shopify = getShopify(requestUrl, creds);
+      const payload = await shopify.session.decodeSessionToken(token.trim());
+      const dest = new URL(payload.dest);
+      const shop = normalizeShop(dest.hostname);
+      if (!shop) continue;
+      return {
+        shop,
+        payload: {
+          dest: payload.dest,
+          aud: String(payload.aud),
+          exp: Number(payload.exp),
+        },
+      };
+    } catch {
+      /* try next app secret */
+    }
   }
+
+  return null;
 }
 
 /**

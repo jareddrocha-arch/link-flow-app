@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(loginUrl);
     }
 
-    const { session, tokenMeta, brandKey } = result;
+    const { session, tokenMeta, brandKey, clientId } = result;
 
     const store = await upsertStoreFromOAuth({
       shop: session.shop,
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
       status: store.status,
     });
 
-    const apiKey = process.env.SHOPIFY_API_KEY?.trim() || "";
+    const apiKey = clientId?.trim() || "";
     const host = request.nextUrl.searchParams.get("host");
     const extraParams: Record<string, string | undefined | null> = {
       shop: store.shop,
