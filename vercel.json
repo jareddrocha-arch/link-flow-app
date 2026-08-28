@@ -2,7 +2,11 @@
   "crons": [
     {
       "path": "/api/cron/reconcile-orders",
-      "schedule": "0 7,19 * * *"
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-orders-noon",
+      "schedule": "0 19 * * *"
     }
   ]
 }
