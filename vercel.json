@@ -1,0 +1,9 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/reconcile-orders",
+      "schedule": "0 7,19 * * *"
+    }
+  ]
+}
+

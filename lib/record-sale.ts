@@ -13,7 +13,7 @@ export type RecordSaleInput = {
   referralCode?: string | null;
   pageUrl?: string | null;
   currency?: string | null;
-  source?: "script" | "webhook" | "pixel" | "manual";
+  source?: "script" | "webhook" | "pixel" | "manual" | "reconcile";
 };
 
 export type RecordSaleResult =
