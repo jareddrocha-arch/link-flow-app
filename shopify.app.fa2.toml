@@ -1,0 +1,39 @@
+# Link Flow - FA2 (custom app for forever-anniversary.myshopify.com)
+# Deploy extensions: shopify app deploy --config fa2 --allow-updates
+# Target client_id: 7f36377a2cdc7ecd9d8697e15c5a2520
+# Do not use this config for the public Link Flow Affiliates App or Sincerely Silver.
+# Do not run shopify app deploy --config forever — that leftover file still
+# points at the old ForeverAnniversary client (b8736bc0…).
+
+client_id = "7f36377a2cdc7ecd9d8697e15c5a2520"
+name = "Link Flow - FA2"
+application_url = "https://link-flow-app-amber.vercel.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+scopes = "read_orders,write_script_tags,write_pixels,read_customer_events"
+use_legacy_install_flow = false
+
+[access.admin]
+embedded_app_direct_api_access = true
+direct_api_mode = "offline"
+
+[auth]
+redirect_urls = [
+  "https://link-flow-app-amber.vercel.app/api/auth/callback",
+  "http://localhost:3000/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
