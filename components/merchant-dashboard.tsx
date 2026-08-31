@@ -156,7 +156,11 @@ export function MerchantDashboard({
   useEffect(() => {
     let cancelled = false;
     const needsBootstrap =
-      Boolean(data.shop) && (data.authRequired || data.needsInstall || !store);
+      Boolean(data.shop) &&
+      (data.authRequired ||
+        data.needsInstall ||
+        data.needsTokenRefresh ||
+        !store);
 
     if (!needsBootstrap) {
       setBootstrapState("idle");
@@ -286,6 +290,7 @@ export function MerchantDashboard({
     brandKeyFromQuery,
     data.authRequired,
     data.needsInstall,
+    data.needsTokenRefresh,
     data.shop,
     store,
   ]);
@@ -618,19 +623,12 @@ export function MerchantDashboard({
           </Banner>
         ) : null}
 
-        {showOnboarding || data.sales.totalCount === 0 || justConnected ? (
-          <Banner
-            title={
-              trackingActive
-                ? "You’re all set — tracking is active"
-                : "Welcome! Let’s finish setup"
-            }
-            tone={trackingActive ? "success" : "info"}
-          >
+        {!trackingActive &&
+        (showOnboarding || data.sales.totalCount === 0 || justConnected) ? (
+          <Banner title="Welcome! Let’s finish setup" tone="info">
             <p>
-              {trackingActive
-                ? "Sales from your store will be recorded automatically. Place a test order when you’re ready."
-                : "Confirm tracking status below. If something is missing, add a brand key if needed, then use Refresh tracking."}
+              Confirm tracking status below. If something is missing, add a
+              brand key if needed, then use Refresh tracking.
             </p>
           </Banner>
         ) : null}

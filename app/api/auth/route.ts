@@ -14,6 +14,9 @@ export async function GET(request: NextRequest) {
   const brandKeyParam =
     request.nextUrl.searchParams.get("brandKey") ||
     request.nextUrl.searchParams.get("brand_key");
+  const clientIdParam =
+    request.nextUrl.searchParams.get("client_id") ||
+    request.nextUrl.searchParams.get("clientId");
   const cold = request.nextUrl.searchParams.get("cold") === "1";
   const shop = sanitizeShopDomain(shopParam, request.url);
 
@@ -42,6 +45,7 @@ export async function GET(request: NextRequest) {
       shop,
       requestUrl: request.url,
       brandKey,
+      clientId: clientIdParam,
     });
   } catch (error) {
     console.error("OAuth begin failed:", error);

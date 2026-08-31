@@ -2,6 +2,22 @@ import type { Store, StoreStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isValidBrandKey } from "@/lib/brand-key";
 
+/**
+ * Brand keys that must survive custom-app swaps / reinstalls.
+ * SS2 (sincerely-silver.myshopify.com) keeps the existing locked key so
+ * linkflowaffiliates.com Sale/Affiliate rows stay attached. Never generate a
+ * new fb_ key for these shops.
+ */
+const LOCKED_BRAND_KEYS_BY_SHOP: Record<string, string> = {
+  "sincerely-silver.myshopify.com": "fb_b0n5wR--mMsq348hAXxa-2iK",
+};
+
+export function lockedBrandKeyForShop(shop: string): string | null {
+  const normalized = normalizeShop(shop);
+  if (!normalized) return null;
+  return LOCKED_BRAND_KEYS_BY_SHOP[normalized] ?? null;
+}
+
 export type UpsertStoreInput = {
   shop: string;
   accessToken: string;
@@ -44,6 +60,7 @@ export async function upsertStoreFromOAuth(
     input.brandKey && isValidBrandKey(input.brandKey.trim())
       ? input.brandKey.trim()
       : null;
+  const lockedKey = lockedBrandKeyForShop(shop);
 
   let resolvedPreferred: string | null = preferredKey;
   if (preferredKey) {
@@ -56,7 +73,7 @@ export async function upsertStoreFromOAuth(
     });
     if (taken) {
       console.warn(
-        "[oauth] brandKey already linked to another shop; generating new key",
+        "[oauth] brandKey already linked to another shop; keeping existing or locked key (never generate)",
         { preferredKey, otherShop: taken.shop, shop },
       );
       resolvedPreferred = null;
@@ -68,17 +85,32 @@ export async function upsertStoreFromOAuth(
   if (existing) {
     // Install-from-Link-Flow (signed OAuth brandKey) wins over empty existing.
     // Never auto-generate: locked keys stay put; missing keys stay null until first set.
+    // SS2: restore the existing Sincerely Silver key if uninstall cleared it.
     let nextBrandKey = existing.brandKey;
+    if (!nextBrandKey && lockedKey) {
+      nextBrandKey = lockedKey;
+      console.info("[oauth] restored locked brandKey for shop", {
+        shop,
+        brandKey: lockedKey,
+      });
+    }
     if (resolvedPreferred) {
-      if (!existing.brandKey || existing.brandKey === resolvedPreferred) {
+      if (!nextBrandKey || nextBrandKey === resolvedPreferred) {
         nextBrandKey = resolvedPreferred;
-      } else if (existing.brandKey !== resolvedPreferred) {
+      } else if (nextBrandKey !== resolvedPreferred) {
         // Key already locked to a different value — keep existing (support to change)
         console.warn(
           "[oauth] store already has brandKey; ignoring install brandKey",
-          { shop, existing: existing.brandKey, preferred: resolvedPreferred },
+          { shop, existing: nextBrandKey, preferred: resolvedPreferred },
         );
       }
+    }
+    if (lockedKey && nextBrandKey && nextBrandKey !== lockedKey) {
+      console.warn(
+        "[oauth] refusing to replace locked shop brandKey",
+        { shop, attempted: nextBrandKey, locked: lockedKey },
+      );
+      nextBrandKey = lockedKey;
     }
 
     return prisma.store.update({
@@ -99,6 +131,14 @@ export async function upsertStoreFromOAuth(
     });
   }
 
+  const createdBrandKey = lockedKey ?? resolvedPreferred;
+  if (lockedKey && resolvedPreferred && resolvedPreferred !== lockedKey) {
+    console.warn(
+      "[oauth] ignoring install brandKey in favor of locked shop key",
+      { shop, preferred: resolvedPreferred, locked: lockedKey },
+    );
+  }
+
   return prisma.store.create({
     data: {
       shop,
@@ -111,8 +151,8 @@ export async function upsertStoreFromOAuth(
       accessTokenExpiresAt,
       refreshToken: input.refreshToken ?? null,
       refreshTokenExpiresAt,
-      // Only set from Link Flow install; otherwise merchant sets once in dashboard
-      brandKey: resolvedPreferred,
+      // Only set from Link Flow install or a shop-locked key; never generate fb_
+      brandKey: createdBrandKey,
     },
   });
 }
@@ -141,6 +181,13 @@ export async function updateStoreBrandKey(
   const store = await prisma.store.findUnique({ where: { shop: normalized } });
   if (!store || store.status !== "ACTIVE") {
     throw new Error("Store not found or not active");
+  }
+
+  const lockedKey = lockedBrandKeyForShop(normalized);
+  if (lockedKey && key !== lockedKey) {
+    throw new Error(
+      "Brand key is locked and cannot be changed from the app. Contact Link Flow support if you need it updated.",
+    );
   }
 
   if (store.brandKey) {
@@ -188,7 +235,9 @@ export async function markStoreUninstalled(shop: string): Promise<Store | null> 
         webhooksInstalledAt: null,
         webPixelId: null,
         webPixelInstalledAt: null,
-        brandKey: null,
+        ...(lockedBrandKeyForShop(normalized)
+          ? {}
+          : { brandKey: null }),
       },
     });
   } catch {

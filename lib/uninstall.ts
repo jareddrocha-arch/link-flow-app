@@ -6,7 +6,7 @@ import {
   listScriptTags,
 } from "@/lib/shopify-admin";
 import { isLinkFlowScriptSrc } from "@/lib/tracking-url";
-import { getStoreByShop, normalizeShop } from "@/lib/stores";
+import { getStoreByShop, lockedBrandKeyForShop, normalizeShop } from "@/lib/stores";
 
 export type UninstallCleanupResult = {
   shop: string;
@@ -160,9 +160,19 @@ export async function cleanupShopUninstall(
 
   // ── 2) Database cleanup (credentials + tracking session state) ───────────
   try {
-    await cleanupStoreDatabase(store);
+    const preserveBrandKey = Boolean(
+      store.brandKey && lockedBrandKeyForShop(store.shop),
+    );
+    await cleanupStoreDatabase(store, { preserveBrandKey });
     dbCleaned = true;
-    brandKeyCleared = true;
+    brandKeyCleared = !preserveBrandKey && Boolean(store.brandKey);
+    notes.push(
+      preserveBrandKey
+        ? `brandKey preserved (${store.brandKey!.slice(0, 6)}…) for SS2 reinstall`
+        : brandKeyCleared
+          ? "brandKey cleared"
+          : "no brandKey on store row",
+    );
   } catch (e) {
     errors.push(
       `db cleanup: ${e instanceof Error ? e.message : String(e)}`,
@@ -215,9 +225,13 @@ export async function cleanupShopUninstall(
 /**
  * Wipe sensitive session data and mark store uninstalled.
  * Keeps historical sales/affiliates for reinstall reporting (cascade-safe).
- * Clears brandKey so tracking keys cannot be reused against a dead install.
+ * SS2 (sincerely-silver) keeps brandKey so the locked fb_ key survives a
+ * private-app swap. Other shops still clear brandKey.
  */
-async function cleanupStoreDatabase(store: Store): Promise<void> {
+async function cleanupStoreDatabase(
+  store: Store,
+  options?: { preserveBrandKey?: boolean },
+): Promise<void> {
   await prisma.store.update({
     where: { id: store.id },
     data: {
@@ -232,8 +246,7 @@ async function cleanupStoreDatabase(store: Store): Promise<void> {
       webhooksInstalledAt: null,
       webPixelId: null,
       webPixelInstalledAt: null,
-      // Invalidate brand key so scripts/webhooks cannot attribute to this install
-      brandKey: null,
+      ...(options?.preserveBrandKey ? {} : { brandKey: null }),
     },
   });
 }

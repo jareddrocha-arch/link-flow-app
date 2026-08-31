@@ -121,8 +121,12 @@ export function beginOAuthRedirect(options: {
   shop: string;
   requestUrl: string;
   brandKey?: string | null;
+  clientId?: string | null;
 }): NextResponse {
-  const credentials = resolveShopifyCredentials({ shop: options.shop });
+  const credentials = resolveShopifyCredentials({
+    shop: options.shop,
+    clientId: options.clientId,
+  });
   const shopify = getShopify(options.requestUrl, credentials);
   const shop = shopify.utils.sanitizeShop(options.shop, true);
   if (!shop) {
@@ -284,12 +288,11 @@ export async function completeOAuth(options: {
       };
     }
   } else if (savedState && !safeEqual(savedState, state)) {
-    return {
-      ok: false,
-      code: "state_mismatch",
-      message:
-        "OAuth state cookie missing or mismatched. Try installing again (cookies must be enabled; complete install within 10 minutes).",
-    };
+    // URL state is validly signed — ignore a leftover cookie from an earlier
+    // attempt (e.g. public-app OAuth begin on the same shop).
+    console.warn("[oauth/callback] ignoring stale oauth state cookie", {
+      shop,
+    });
   }
 
   if (savedShop && shopify.utils.sanitizeShop(savedShop, true) !== shop) {

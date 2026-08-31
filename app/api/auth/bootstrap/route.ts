@@ -5,7 +5,10 @@ import {
 } from "@/lib/session-token";
 import { setShopSessionCookie } from "@/lib/shop-session";
 import { peekShopifySessionToken, resolveShopifyCredentials } from "@/lib/shopify-credentials";
-import { exchangeSessionTokenForOfflineAccess } from "@/lib/shopify-tokens";
+import {
+  exchangeSessionTokenForOfflineAccess,
+  offlineTokenNeedsRefresh,
+} from "@/lib/shopify-tokens";
 import { getStoreByShop, normalizeShop, upsertStoreFromOAuth } from "@/lib/stores";
 import { provisionStoreTracking } from "@/lib/provision-tracking";
 import { isValidBrandKey } from "@/lib/brand-key";
@@ -95,10 +98,10 @@ export async function POST(request: NextRequest) {
     let store = await getStoreByShop(shop);
     let provisioned = false;
 
-    const needsToken =
-      !store ||
-      store.status !== "ACTIVE" ||
-      !store.accessToken?.trim();
+    // Re-exchange when missing, inactive, empty, or expired. Required for
+    // private-app swaps (SS2): an old app's leftover token looks "installed"
+    // but Admin API 401s and must not skip session-token exchange.
+    const needsToken = offlineTokenNeedsRefresh(store);
 
     if (needsToken) {
       console.info("[auth/bootstrap] exchanging session token for offline access", {

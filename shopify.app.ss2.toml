@@ -1,0 +1,40 @@
+# LF - SS2 (custom app for sincerely-silver.myshopify.com)
+# Deploy extensions AFTER install: shopify app deploy --config ss2 --allow-updates
+# Target client_id: 42ead17aa5cdfe33009985dc327c09e1
+# Do not use this config for the public Link Flow Affiliates App (83757e48…).
+# Do not use this config for FA2 (7f36377a…) or shopify.app.fa2.toml.
+# Do not run shopify app deploy --config sincerely — that leftover file still
+# points at the old LinkFlow - Sincerely Silver client (8769fb4e…).
+
+client_id = "42ead17aa5cdfe33009985dc327c09e1"
+name = "LF - SS2"
+application_url = "https://link-flow-app-amber.vercel.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+scopes = "read_orders,write_script_tags,write_pixels,read_customer_events"
+use_legacy_install_flow = false
+
+[access.admin]
+embedded_app_direct_api_access = true
+direct_api_mode = "offline"
+
+[auth]
+redirect_urls = [
+  "https://link-flow-app-amber.vercel.app/api/auth/callback",
+  "http://localhost:3000/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  uri = "https://link-flow-app-amber.vercel.app/api/webhooks/shopify"

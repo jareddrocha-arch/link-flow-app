@@ -6,6 +6,9 @@
  * Optional shop fallback: SHOPIFY_SHOP_MATCH_<SUFFIX>=substring[,substring]
  *
  * Adding a custom app later is env-only — no code change.
+ *
+ * SINCERELY pair = LF - SS2 for sincerely-silver.myshopify.com.
+ * Do not point it at the public App Store app or FA2.
  */
 
 export type ShopifyAppCredentials = {
@@ -33,7 +36,9 @@ const MATCH_PREFIX = "SHOPIFY_SHOP_MATCH_";
  * SHOPIFY_SHOP_MATCH_<SUFFIX> instead of adding more names here.
  */
 const BUILTIN_SHOP_MATCHERS: Record<string, string[]> = {
-  SINCERELY: ["sincerelysilver"],
+  // Hyphen-stripped form plus the real myshopify subdomain.
+  // "sincerelysilver" alone does not match sincerely-silver.myshopify.com.
+  SINCERELY: ["sincerely-silver", "sincerelysilver"],
 };
 
 let cached: ShopifyAppCredentials[] | null = null;
@@ -197,11 +202,20 @@ export function getShopifyCredentialsByShop(
   if (!domain) return null;
   for (const creds of listShopifyCredentials()) {
     if (creds.id === DEFAULT_CREDENTIALS_ID) continue;
-    if (creds.shopMatchers.some((matcher) => domain.includes(matcher))) {
+    if (creds.shopMatchers.some((matcher) => shopMatches(domain, matcher))) {
       return creds;
     }
   }
   return null;
+}
+
+/** Substring match, also ignoring hyphens so sincerelysilver ≈ sincerely-silver. */
+function shopMatches(domain: string, matcher: string): boolean {
+  const d = domain.toLowerCase();
+  const m = matcher.toLowerCase();
+  if (!m) return false;
+  if (d.includes(m)) return true;
+  return d.replace(/-/g, "").includes(m.replace(/-/g, ""));
 }
 
 /**

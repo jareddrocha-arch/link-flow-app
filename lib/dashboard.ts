@@ -9,6 +9,7 @@ import {
   verifyShopifySessionToken,
 } from "@/lib/session-token";
 import { getStoreByShop, normalizeShop } from "@/lib/stores";
+import { offlineTokenNeedsRefresh } from "@/lib/shopify-tokens";
 import { getTrackingScriptUrl } from "@/lib/tracking-url";
 import type { Sale, Store } from "@prisma/client";
 
@@ -53,6 +54,8 @@ export type MerchantDashboardData = {
     recent: DashboardSale[];
   };
   needsInstall: boolean;
+  /** Offline Admin token missing or expired — client should session-bootstrap. */
+  needsTokenRefresh: boolean;
 };
 
 function money(n: number): string {
@@ -91,6 +94,7 @@ function emptyDashboard(
     },
     sales: { totalCount: 0, totalAmount: money(0), recent: [] },
     needsInstall: true,
+    needsTokenRefresh: true,
     ...partial,
   };
 }
@@ -266,6 +270,7 @@ export async function loadMerchantDashboard(
       recent: recent.map(mapSale),
     },
     needsInstall: store.status !== "ACTIVE",
+    needsTokenRefresh: offlineTokenNeedsRefresh(store),
   };
 }
 

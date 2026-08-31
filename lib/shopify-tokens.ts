@@ -249,6 +249,14 @@ function needsRefresh(store: Store): boolean {
   return store.accessTokenExpiresAt.getTime() <= Date.now() + 2 * 60 * 1000;
 }
 
+/** True when bootstrap should mint a new offline token (expired / missing). */
+export function offlineTokenNeedsRefresh(store: Store | null | undefined): boolean {
+  if (!store || store.status !== "ACTIVE" || !store.accessToken?.trim()) {
+    return true;
+  }
+  return needsRefresh(store);
+}
+
 /**
  * Return a valid offline access token for Admin API calls.
  * Refreshes or migrates tokens as required by Shopify.
